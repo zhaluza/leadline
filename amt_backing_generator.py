@@ -132,28 +132,99 @@ class AMTBackingGenerator:
         midi.instruments.append(drums)
         return midi
 
+    def create_seed_melody(self, key=60, duration_seconds=16):
+        """Create a seed melody using common guitar patterns in the given key."""
+        # Create a MIDI file for the seed melody
+        seed_midi = pretty_midi.PrettyMIDI()
+        
+        # Create a guitar instrument (using a clean electric guitar sound)
+        guitar = pretty_midi.Instrument(program=27)  # Clean Electric Guitar
+        
+        # Define a pentatonic scale in the given key
+        # Using A minor pentatonic as an example (A, C, D, E, G)
+        scale = [key, key + 3, key + 5, key + 7, key + 10]
+        
+        # Create a simple seed melody with common guitar patterns
+        # Pattern 1: Ascending scale run
+        for i, pitch in enumerate(scale):
+            note = pretty_midi.Note(
+                velocity=80,
+                pitch=pitch,
+                start=i * 0.25,  # Quarter notes
+                end=(i + 1) * 0.25
+            )
+            guitar.notes.append(note)
+        
+        # Pattern 2: Call and response (higher register)
+        # Call
+        call_notes = [scale[0] + 12, scale[2] + 12, scale[4] + 12, scale[2] + 12]
+        for i, pitch in enumerate(call_notes):
+            note = pretty_midi.Note(
+                velocity=85,
+                pitch=pitch,
+                start=2 + i * 0.5,  # Half notes
+                end=2 + (i + 1) * 0.5
+            )
+            guitar.notes.append(note)
+        
+        # Response (lower register)
+        response_notes = [scale[4], scale[2], scale[0], scale[2]]
+        for i, pitch in enumerate(response_notes):
+            note = pretty_midi.Note(
+                velocity=80,
+                pitch=pitch,
+                start=4 + i * 0.5,
+                end=4 + (i + 1) * 0.5
+            )
+            guitar.notes.append(note)
+        
+        # Pattern 3: Blues-style phrase
+        blues_notes = [scale[0], scale[0] + 1, scale[2], scale[4], scale[2], scale[0]]
+        for i, pitch in enumerate(blues_notes):
+            duration = 0.25 if i in [1, 3] else 0.5  # Shorter notes for passing tones
+            start_time = 6 + sum(0.25 if j in [1, 3] else 0.5 for j in range(i))
+            note = pretty_midi.Note(
+                velocity=90,
+                pitch=pitch,
+                start=start_time,
+                end=start_time + duration
+            )
+            guitar.notes.append(note)
+        
+        seed_midi.instruments.append(guitar)
+        return seed_midi
+
     def generate_lead_melody(self, backing_midi, duration_seconds=16):
         """Generate a lead melody using AMT over the backing track."""
         print("Converting backing track to events...")
         
-        # Save temporary MIDI file
-        temp_file = self.output_dir / 'temp_backing.mid'
-        backing_midi.write(str(temp_file))
+        # Create and convert seed melody to events
+        print("Creating seed melody for better generation...")
+        seed_midi = self.create_seed_melody(key=57)  # A minor
+        temp_seed_file = self.output_dir / 'temp_seed.mid'
+        seed_midi.write(str(temp_seed_file))
+        seed_events = midi_to_events(str(temp_seed_file))
+        os.remove(temp_seed_file)
         
-        # Convert to events
-        seed_events = midi_to_events(str(temp_file))
-        os.remove(temp_file)
+        # Convert backing track to events
+        temp_backing_file = self.output_dir / 'temp_backing.mid'
+        backing_midi.write(str(temp_backing_file))
+        backing_events = midi_to_events(str(temp_backing_file))
+        os.remove(temp_backing_file)
         
-        print(f"Generating lead melody with {len(seed_events)} seed events...")
+        # Combine seed and backing events
+        combined_events = seed_events + backing_events
+        
+        print(f"Generating lead melody with {len(combined_events)} seed events...")
         
         try:
-            # Generate with seed conditioning - removed temperature parameter
+            # Generate with combined seed conditioning
             generated_events = generate(
                 self.model,
                 start_time=0,
                 end_time=duration_seconds,
-                controls=seed_events,
-                top_p=0.8
+                controls=combined_events,
+                top_p=0.7  # Slightly higher for more variation while maintaining structure
             )
             
             # Convert back to MIDI
@@ -165,18 +236,70 @@ class AMTBackingGenerator:
             pretty_generated = pretty_midi.PrettyMIDI(str(temp_file))
             os.remove(temp_file)
             
-            # Filter for melody notes (higher pitch range)
+            # Create a new MIDI file for the melody
             melody_midi = pretty_midi.PrettyMIDI()
             
+            # Create a guitar lead instrument
+            guitar_lead = pretty_midi.Instrument(program=27)  # Clean Electric Guitar
+            
+            # Process and filter the generated notes
+            valid_notes = []
             for instrument in pretty_generated.instruments:
                 if not instrument.is_drum:
-                    # Only keep notes in melody range
-                    melody_notes = [note for note in instrument.notes if 60 <= note.pitch <= 90]
-                    if melody_notes:
-                        instrument.notes = melody_notes
-                        melody_midi.instruments.append(instrument)
+                    # Filter notes to be in guitar range (E2-E6)
+                    for note in instrument.notes:
+                        # Keep notes in guitar range (40-88)
+                        if 40 <= note.pitch <= 88:
+                            # Ensure valid timing
+                            start_time = max(0, note.start)
+                            end_time = min(duration_seconds, note.end)
+                            
+                            # Skip notes with invalid timing
+                            if end_time <= start_time:
+                                continue
+                                
+                            # Adjust velocity for better dynamics
+                            velocity = min(100, max(60, note.velocity))
+                            
+                            # Create a new note with adjusted parameters
+                            new_note = pretty_midi.Note(
+                                velocity=velocity,
+                                pitch=note.pitch,
+                                start=start_time,
+                                end=min(end_time, start_time + 0.75)  # Slightly longer notes for guitar
+                            )
+                            valid_notes.append(new_note)
             
-            return melody_midi
+            # Sort notes by start time
+            valid_notes.sort(key=lambda x: x.start)
+            
+            # Add note smoothing with timing validation
+            if valid_notes:
+                smoothed_notes = []
+                for i in range(len(valid_notes)):
+                    current_note = valid_notes[i]
+                    
+                    # Skip if note duration is too short
+                    if current_note.end - current_note.start < 0.1:  # Longer minimum duration for guitar
+                        continue
+                    
+                    # Adjust end time if next note is too close
+                    if i < len(valid_notes) - 1:
+                        next_note = valid_notes[i + 1]
+                        if next_note.start - current_note.end < 0.1:
+                            # Ensure we don't create negative duration
+                            new_end = max(current_note.start + 0.1, next_note.start - 0.1)
+                            current_note.end = new_end
+                    
+                    smoothed_notes.append(current_note)
+                
+                # Add all valid, smoothed notes to the guitar lead
+                guitar_lead.notes = smoothed_notes
+                melody_midi.instruments.append(guitar_lead)
+                return melody_midi
+            else:
+                print("No suitable notes found in the generated melody")
+                return None
             
         except Exception as e:
             print(f"Generation failed: {e}")
