@@ -7,28 +7,138 @@ import numpy as np
 from IPython.display import Audio
 import os
 from pathlib import Path
+import subprocess
+import tempfile
 
 class AMTBackingGenerator:
-    def __init__(self, model_name='stanford-crfm/music-medium-800k'):
-        """Initialize the AMT backing generator with the specified model."""
+    def __init__(self, model_name='stanford-crfm/music-medium-800k', soundfont_path=None):
+        """Initialize the AMT backing generator with the specified model and soundfont."""
         print("Loading AMT model...")
         self.model = AutoModelForCausalLM.from_pretrained(model_name)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = self.model.to(self.device)
         print(f"Model loaded on {self.device}")
         
+        # Check if fluidsynth is installed
+        try:
+            result = subprocess.run(['fluidsynth', '--version'], 
+                                 capture_output=True, 
+                                 text=True, 
+                                 check=False)
+            if result.returncode == 0:
+                print(f"Fluidsynth found: {result.stdout.strip()}")
+            else:
+                print("Warning: fluidsynth command failed. Please ensure it's installed correctly.")
+                print(f"Error: {result.stderr}")
+        except FileNotFoundError:
+            print("Warning: fluidsynth not found. Please install it:")
+            print("  macOS: brew install fluid-synth")
+            print("  Ubuntu/Debian: sudo apt-get install fluidsynth")
+            print("  Windows: Download from https://www.fluidsynth.org/")
+        
+        # Set up soundfont
+        self.soundfont_path = soundfont_path
+        if soundfont_path is None:
+            # Try to find a default soundfont
+            possible_paths = [
+                "/usr/share/sounds/sf2/FluidR3_GM.sf2",  # Linux
+                "/usr/local/share/fluidsynth/sf2/FluidR3_GM.sf2",  # macOS
+                "C:/soundfonts/FluidR3_GM.sf2",  # Windows
+            ]
+            for path in possible_paths:
+                if os.path.exists(path):
+                    self.soundfont_path = path
+                    break
+        
+        if self.soundfont_path is None:
+            print("Warning: No soundfont found. MIDI playback will use default synthesizer.")
+        else:
+            print(f"Using soundfont: {self.soundfont_path}")
+            if not os.path.exists(self.soundfont_path):
+                print(f"Warning: Soundfont file not found at {self.soundfont_path}")
+        
         # Create output directory if it doesn't exist
         self.output_dir = Path("output")
         self.output_dir.mkdir(exist_ok=True)
 
-    def create_backing_track(self, duration_seconds=16, tempo=120):
+    def midi_to_audio(self, midi_file, sample_rate=44100):
+        """Convert MIDI to audio using fluidsynth and the specified soundfont."""
+        if self.soundfont_path is None:
+            print("No soundfont specified, falling back to pretty_midi synthesizer...")
+            return midi_file.synthesize(fs=sample_rate)
+        
+        if not os.path.exists(self.soundfont_path):
+            print(f"Soundfont not found at {self.soundfont_path}, falling back to pretty_midi synthesizer...")
+            return midi_file.synthesize(fs=sample_rate)
+        
+        # Create a temporary file for the audio output
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
+            temp_audio_path = temp_audio.name
+        
+        try:
+            # Save the MIDI file to a temporary file
+            with tempfile.NamedTemporaryFile(suffix='.mid', delete=False) as temp_midi:
+                temp_midi_path = temp_midi.name
+                midi_file.write(temp_midi_path)
+            
+            # Use fluidsynth to convert MIDI to audio
+            cmd = [
+                'fluidsynth',
+                '-F', temp_audio_path,  # Output file
+                '-r', str(sample_rate),  # Sample rate
+                '-g', '1.0',  # Gain
+                '-i',  # Input file
+                temp_midi_path,  # MIDI file
+                self.soundfont_path,  # Soundfont
+                '-q'  # Quiet mode
+            ]
+            
+            print(f"Running command: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            
+            if result.returncode != 0:
+                print(f"Fluidsynth error output: {result.stderr}")
+                raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+            
+            # Read the generated audio file
+            audio_data = np.frombuffer(open(temp_audio_path, 'rb').read(), dtype=np.int16)
+            # Convert to float32 and normalize
+            audio_data = audio_data.astype(np.float32) / 32768.0
+            
+            return audio_data
+            
+        except subprocess.CalledProcessError as e:
+            print(f"Error running fluidsynth: {e}")
+            print(f"Command output: {e.stdout}")
+            print(f"Error output: {e.stderr}")
+            print("Falling back to pretty_midi synthesizer...")
+            return midi_file.synthesize(fs=sample_rate)
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            print("Falling back to pretty_midi synthesizer...")
+            return midi_file.synthesize(fs=sample_rate)
+        finally:
+            # Clean up temporary files
+            try:
+                os.unlink(temp_audio_path)
+                os.unlink(temp_midi_path)
+            except:
+                pass
+
+    def create_backing_track(self, duration_seconds=12, tempo=240):
         """Create a synthwave-style backing track with drums, bass, and synth chords."""
+        # Convert BPM to microseconds per quarter note
+        # 60 seconds * 1,000,000 microseconds / (tempo BPM * 4 beats per measure)
+        microseconds_per_quarter = int(60000000 / tempo)
+        
+        # Create MIDI file with the correct tempo
         midi = pretty_midi.PrettyMIDI(initial_tempo=tempo)
         
         # Add synth pad for chords (using a warm pad sound)
         synth_pad = pretty_midi.Instrument(program=89)  # Warm Pad
         
         # Synthwave chord progression: Am - F - C - G (in key of A minor)
+        # Each chord lasts 1.5 seconds (one bar at 240 BPM)
         chord_progression = [
             [57, 60, 64],  # A minor (A3, C4, E4)
             [53, 57, 60],  # F major (F3, A3, C4)
@@ -36,118 +146,98 @@ class AMTBackingGenerator:
             [55, 59, 62],  # G major (G3, B3, D4)
         ]
         
-        # Add arpeggiated chords with synthwave style
+        # Calculate actual time per bar at 240 BPM
+        seconds_per_bar = 60.0 / tempo * 4  # 4 beats per bar
+        
+        # Add sustained chords with synth pad
         for i, chord in enumerate(chord_progression):
-            start_time = i * (duration_seconds / 4)
-            # Arpeggiate each chord
-            for j, note_pitch in enumerate(chord):
-                # Add some variation to the arpeggiation timing
-                note_start = start_time + (j * 0.125)  # 16th notes
-                note_end = note_start + 0.25  # 8th notes
-                
-                # Add the main chord note
+            start_time = i * seconds_per_bar
+            end_time = start_time + seconds_per_bar
+            
+            # Add the main chord notes
+            for note_pitch in chord:
+                # Main chord note
                 note = pretty_midi.Note(
-                    velocity=70,
+                    velocity=70,  # Moderate velocity for pad
                     pitch=note_pitch,
-                    start=note_start,
-                    end=note_end
+                    start=start_time,
+                    end=end_time
                 )
                 synth_pad.notes.append(note)
                 
-                # Add an octave up for more synthwave feel
+                # Add an octave up for more fullness
                 note = pretty_midi.Note(
                     velocity=65,
                     pitch=note_pitch + 12,
-                    start=note_start,
-                    end=note_end
+                    start=start_time,
+                    end=end_time
                 )
                 synth_pad.notes.append(note)
         
         midi.instruments.append(synth_pad)
         
-        # Add synth bass with a more interesting pattern
+        # Add synthwave bass with steady 16th notes
         synth_bass = pretty_midi.Instrument(program=87)  # Lead 8 (bass + lead)
-        bass_notes = [57, 53, 48, 55]  # Root notes of chord progression
         
-        for i, note_pitch in enumerate(bass_notes):
-            start_time = i * (duration_seconds / 4)
+        for i, chord in enumerate(chord_progression):
+            start_time = i * seconds_per_bar
+            sixteenth_note_duration = seconds_per_bar / 16  # Duration of a 16th note
             
-            # Main bass note on beat 1
-            note = pretty_midi.Note(
-                velocity=100,
-                pitch=note_pitch,
-                start=start_time,
-                end=start_time + 0.5
-            )
-            synth_bass.notes.append(note)
-            
-            # Add a higher note on beat 2
-            higher_note = pretty_midi.Note(
-                velocity=90,
-                pitch=note_pitch + 7,  # Perfect fifth
-                start=start_time + 0.5,
-                end=start_time + 1.0
-            )
-            synth_bass.notes.append(higher_note)
-            
-            # Add a lower note on beat 3
-            lower_note = pretty_midi.Note(
-                velocity=95,
-                pitch=note_pitch - 12,  # Octave down
-                start=start_time + 1.0,
-                end=start_time + 1.5
-            )
-            synth_bass.notes.append(lower_note)
-            
-            # Add a slide up to the root on beat 4
-            slide_note = pretty_midi.Note(
-                velocity=85,
-                pitch=note_pitch - 5,  # Perfect fourth
-                start=start_time + 1.5,
-                end=start_time + 2.0
-            )
-            synth_bass.notes.append(slide_note)
+            # Create a steady 16th note pattern
+            for j in range(16):  # 16 16th notes per bar
+                note_start = start_time + (j * sixteenth_note_duration)
+                note_end = note_start + (sixteenth_note_duration / 4)  # Very short notes for tight bass
+                
+                # Skip the first 16th note of beats 2, 3, and 4
+                beat_position = j % 4
+                if beat_position == 0 and j > 0:  # If it's the first 16th note of beats 2, 3, or 4
+                    continue
+                
+                # Cycle through chord notes for arpeggiation
+                chord_position = j % len(chord)
+                pitch = chord[chord_position]
+                
+                # Adjust velocity based on position in bar
+                if j % 4 == 0:  # On the beat
+                    velocity = 100
+                else:
+                    velocity = 90
+                
+                note = pretty_midi.Note(
+                    velocity=velocity,
+                    pitch=pitch,
+                    start=note_start,
+                    end=note_end
+                )
+                synth_bass.notes.append(note)
         
         midi.instruments.append(synth_bass)
         
-        # Add drum track with synthwave style
+        # Add drum track with steady 16th note hi-hats
         drums = pretty_midi.Instrument(program=0, is_drum=True)
-        beats_per_measure = 4
         measures = 4
-        beat_duration = duration_seconds / (beats_per_measure * measures)
         
         for measure in range(measures):
-            for beat in range(beats_per_measure):
-                beat_time = measure * beats_per_measure * beat_duration + beat * beat_duration
+            measure_start = measure * seconds_per_bar
+            
+            for beat in range(4):  # 4 beats per bar
+                beat_time = measure_start + (beat * seconds_per_bar / 4)
                 
-                # Kick drum on beats 1 and 3 (stronger)
-                if beat in [0, 2]:
-                    kick = pretty_midi.Note(velocity=120, pitch=36, start=beat_time, end=beat_time + 0.1)
-                    drums.notes.append(kick)
+                # Kick drum on all beats (1, 2, 3, 4)
+                kick = pretty_midi.Note(velocity=100, pitch=36, start=beat_time, end=beat_time + 0.05)
+                drums.notes.append(kick)
                 
-                # Snare on beats 2 and 4 (stronger)
+                # Snare on beats 2 and 4
                 if beat in [1, 3]:
-                    snare = pretty_midi.Note(velocity=110, pitch=38, start=beat_time, end=beat_time + 0.1)
+                    snare = pretty_midi.Note(velocity=90, pitch=38, start=beat_time, end=beat_time + 0.05)
                     drums.notes.append(snare)
                 
-                # Hi-hat on all beats with variation
-                if beat in [0, 2]:  # Stronger on beats 1 and 3
-                    hihat = pretty_midi.Note(velocity=80, pitch=42, start=beat_time, end=beat_time + 0.05)
+                # Steady 16th note hi-hat pattern
+                for j in range(4):  # 4 16th notes per beat
+                    hihat_time = beat_time + (j * seconds_per_bar / 16)
+                    velocity = 75 if j in [0, 2] else 70
+                    hihat = pretty_midi.Note(velocity=velocity, pitch=42, start=hihat_time, end=hihat_time + 0.025)
                     drums.notes.append(hihat)
-                else:  # Softer on beats 2 and 4
-                    hihat = pretty_midi.Note(velocity=60, pitch=42, start=beat_time, end=beat_time + 0.05)
-                    drums.notes.append(hihat)
-                
-                # Add closed hi-hat on off-beats for more groove
-                if beat not in [0, 2]:
-                    off_beat_time = beat_time + beat_duration/2
-                    hihat = pretty_midi.Note(velocity=50, pitch=42, start=off_beat_time, end=off_beat_time + 0.05)
-                    drums.notes.append(hihat)
-                
-                # Add crash cymbal on beat 1 of each measure
-                if beat == 0:
-                    crash = pretty_midi.Note(velocity=100, pitch=49, start=beat_time, end=beat_time + 0.1)
-                    drums.notes.append(crash)
         
         midi.instruments.append(drums)
         return midi
@@ -218,7 +308,7 @@ class AMTBackingGenerator:
         seed_midi.instruments.append(guitar)
         return seed_midi
 
-    def generate_lead_melody(self, backing_midi, duration_seconds=16):
+    def generate_lead_melody(self, backing_midi, duration_seconds=12):
         """Generate a lead melody using AMT over the backing track."""
         print("Converting backing track to events...")
         
@@ -320,9 +410,10 @@ class AMTBackingGenerator:
                             duration *= 1.25
                         
                         # Adjust velocity for better dynamics with more variation
-                        base_velocity = min(100, max(60, note.velocity))
+                        # Increase base velocity for more prominent lead
+                        base_velocity = min(120, max(80, note.velocity))  # Higher minimum velocity
                         if i == 0:  # First variation: more dynamic
-                            velocity = int(base_velocity * (0.8 + (0.4 * (note.pitch % 12) / 12)))
+                            velocity = int(base_velocity * (0.9 + (0.2 * (note.pitch % 12) / 12)))
                         elif i == 1:  # Second variation: more consistent
                             velocity = int(base_velocity * 1.1)
                         else:
@@ -366,7 +457,8 @@ class AMTBackingGenerator:
             if best_melody:
                 # Create a new MIDI file for the melody
                 melody_midi = pretty_midi.PrettyMIDI()
-                guitar_lead = pretty_midi.Instrument(program=27)  # Clean Electric Guitar
+                # Use a different synth sound for the lead (a bright, cutting synth)
+                guitar_lead = pretty_midi.Instrument(program=81)  # Lead 2 (sawtooth) - bright and cutting
                 guitar_lead.notes = best_melody
                 melody_midi.instruments.append(guitar_lead)
                 return melody_midi
@@ -380,7 +472,7 @@ class AMTBackingGenerator:
 
     def preview_audio(self, midi_file, sample_rate=44100):
         """Convert MIDI to audio and return an IPython Audio object for preview."""
-        audio_data = midi_file.synthesize(fs=sample_rate)
+        audio_data = self.midi_to_audio(midi_file, sample_rate)
         return Audio(audio_data, rate=sample_rate)
 
     def save_and_preview(self, midi_file, filename):
@@ -388,11 +480,23 @@ class AMTBackingGenerator:
         output_path = self.output_dir / filename
         midi_file.write(str(output_path))
         print(f"Saved to {output_path}")
+        
+        # Also save the audio file if we're using a soundfont
+        if self.soundfont_path is not None:
+            audio_path = output_path.with_suffix('.wav')
+            audio_data = self.midi_to_audio(midi_file)
+            # Convert to 16-bit PCM
+            audio_data = (audio_data * 32768).astype(np.int16)
+            with open(audio_path, 'wb') as f:
+                f.write(audio_data.tobytes())
+            print(f"Saved audio to {audio_path}")
+        
         return self.preview_audio(midi_file)
 
 def main():
-    # Initialize generator
-    generator = AMTBackingGenerator()
+    # Initialize generator with soundfont
+    # You can specify your own soundfont path here
+    generator = AMTBackingGenerator(soundfont_path="/path/to/your/soundfont.sf2")
     
     # Generate backing track
     print("\nGenerating backing track...")
