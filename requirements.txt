@@ -1,0 +1,6 @@
+torch>=2.0.0
+transformers>=4.30.0
+pretty-midi>=0.2.10
+numpy>=1.24.0
+anticipation @ git+https://github.com/jthickstun/anticipation.git
+ipython>=8.0.0 
