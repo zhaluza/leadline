@@ -16,6 +16,12 @@ class AMTBackingGenerator:
         print("Loading AMT model...")
         self.model = AutoModelForCausalLM.from_pretrained(model_name)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if torch.backends.mps.is_available():
+            self.device = torch.device('mps')
+        elif torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        else:
+            self.device = torch.device('cpu')
         self.model = self.model.to(self.device)
         print(f"Model loaded on {self.device}")
         
@@ -251,63 +257,60 @@ class AMTBackingGenerator:
         
         # Define a major scale with some additional notes for more interest
         # Using C major with added notes (C, D, E, F, G, A, B)
-        # Shift the scale up by an octave for guitar-like range
-        base_key = key + 12  # Move up an octave
+        # Keep everything in a reasonable guitar range (72-96)
+        base_key = 72  # Start at C5 (72)
         scale = [base_key, base_key + 2, base_key + 4, base_key + 5, base_key + 7, base_key + 9, base_key + 11]
         
         # Calculate timing based on tempo
         seconds_per_bar = 60.0 / 240 * 4  # 4 beats per bar at 240 BPM
-        thirtysecond_note = seconds_per_bar / 32  # For faster patterns
+        sixteenth_note = seconds_per_bar / 4  # For consistent rhythm
         
-        # Pattern 1: Fast ascending arpeggio with octave jumps (bars 1-2)
-        arpeggio_notes = []
-        for octave in [0, 1]:  # Two octaves
-            for note in [scale[0], scale[2], scale[4], scale[6], scale[4], scale[2]]:
-                arpeggio_notes.append(note + (octave * 12))
+        # Pattern 1: Syncopated rhythm with chord tones (bars 1-2)
+        pattern1 = [
+            (scale[0], sixteenth_note * 1.5),      # Held note
+            (scale[4], sixteenth_note * 0.5),      # Quick note
+            (scale[2], sixteenth_note),            # Regular note
+            (scale[4], sixteenth_note),            # Regular note
+            (scale[6], sixteenth_note * 1.5),      # Held note
+            (scale[4], sixteenth_note * 0.5),      # Quick note
+            (scale[2], sixteenth_note),            # Regular note
+            (scale[0], sixteenth_note),            # Regular note
+        ]
         
-        for i, pitch in enumerate(arpeggio_notes):
-            duration = thirtysecond_note  # 32nd notes for faster movement
-            start_time = i * duration
-            note = pretty_midi.Note(
-                velocity=90,
-                pitch=pitch,
-                start=start_time,
-                end=start_time + duration
-            )
-            synth_lead.notes.append(note)
+        # Pattern 2: Alternating high and low notes (bars 3-4)
+        pattern2 = [
+            (scale[4], sixteenth_note),            # High note
+            (scale[0], sixteenth_note),            # Low note
+            (scale[5], sixteenth_note),            # High note
+            (scale[2], sixteenth_note),            # Low note
+            (scale[6], sixteenth_note),            # High note
+            (scale[4], sixteenth_note),            # Low note
+            (scale[0], sixteenth_note),            # High note
+            (scale[5], sixteenth_note),            # Low note
+        ]
         
-        # Pattern 2: Rapid descending sequence with syncopation (bars 3-4)
-        sequence_notes = []
-        for octave in [1, 0]:  # Start high, go low
-            for note in [scale[6], scale[5], scale[4], scale[3], scale[2], scale[1], scale[0]]:
-                sequence_notes.append(note + (octave * 12))
-        
-        for i, pitch in enumerate(sequence_notes):
-            # Mix of 16th and 32nd notes for syncopation
-            duration = thirtysecond_note if i % 2 == 0 else thirtysecond_note * 2
-            start_time = 2 + sum(thirtysecond_note if j % 2 == 0 else thirtysecond_note * 2 for j in range(i))
-            note = pretty_midi.Note(
-                velocity=85,
-                pitch=pitch,
-                start=start_time,
-                end=start_time + duration
-            )
-            synth_lead.notes.append(note)
-        
-        # Pattern 3: Fast alternating pattern with held notes (bars 5-6)
-        alternating_notes = []
-        for i in range(8):  # Create a longer pattern
+        # Pattern 3: Ascending sequence with rhythm (bars 5-6)
+        pattern3 = []
+        for i in range(8):
             if i % 2 == 0:
-                alternating_notes.extend([(scale[0] + 12, thirtysecond_note * 2),  # Held note
-                                        (scale[4], thirtysecond_note),             # Quick note
-                                        (scale[2], thirtysecond_note)])            # Quick note
+                pattern3.append((scale[i % 7], sixteenth_note * 1.5))  # Held note
             else:
-                alternating_notes.extend([(scale[4] + 12, thirtysecond_note * 2),  # Held note
-                                        (scale[2], thirtysecond_note),             # Quick note
-                                        (scale[0], thirtysecond_note)])            # Quick note
+                pattern3.append((scale[(i + 2) % 7], sixteenth_note * 0.5))  # Quick note
         
-        current_time = 4  # Start at bar 5
-        for pitch, duration in alternating_notes:
+        # Pattern 4: Descending sequence with rhythm (bars 7-8)
+        pattern4 = []
+        for i in range(8):
+            if i % 2 == 0:
+                pattern4.append((scale[6 - (i % 7)], sixteenth_note))  # Regular note
+            else:
+                pattern4.append((scale[6 - (i % 7)], sixteenth_note))  # Regular note
+        
+        # Combine all patterns
+        all_patterns = pattern1 + pattern2 + pattern3 + pattern4
+        
+        # Add notes to the track
+        current_time = 0
+        for pitch, duration in all_patterns:
             note = pretty_midi.Note(
                 velocity=90,
                 pitch=pitch,
@@ -317,70 +320,50 @@ class AMTBackingGenerator:
             synth_lead.notes.append(note)
             current_time += duration
         
-        # Pattern 4: Rapid scale runs with octave jumps (bars 7-8)
-        scale_runs = []
-        for octave in [0, 1, 0]:  # Three octaves of movement
-            if octave == 1:
-                scale_runs.extend(scale[::-1])  # Descending
-            else:
-                scale_runs.extend(scale)  # Ascending
-        
-        for i, pitch in enumerate(scale_runs):
-            duration = thirtysecond_note  # 32nd notes for fast runs
-            start_time = 6 + (i * duration)
-            note = pretty_midi.Note(
-                velocity=85,
-                pitch=pitch + (12 * (i // len(scale))),  # Add octave based on which run we're in
-                start=start_time,
-                end=start_time + duration
-            )
-            synth_lead.notes.append(note)
-        
         seed_midi.instruments.append(synth_lead)
         return seed_midi
 
     def generate_lead_melody(self, backing_midi, duration_seconds=24):
-        """Generate a lead melody using AMT over the backing track."""
+        """Generate a lead melody using AMT over the backing track and a seed melody."""
         print("Converting backing track to events...")
-        
+
         # Create and convert seed melody to events
         print("Creating seed melody for better generation...")
         seed_midi = self.create_seed_melody(key=60)  # C major
-        
+
         # Save the seed melody for reference
         seed_path = self.output_dir / 'seed_melody.mid'
         seed_midi.write(str(seed_path))
         print(f"Saved seed melody to {seed_path}")
-        
+
         temp_seed_file = self.output_dir / 'temp_seed.mid'
         seed_midi.write(str(temp_seed_file))
         seed_events = midi_to_events(str(temp_seed_file))
         os.remove(temp_seed_file)
-        
+
         # Convert backing track to events
         temp_backing_file = self.output_dir / 'temp_backing.mid'
         backing_midi.write(str(temp_backing_file))
         backing_events = midi_to_events(str(temp_backing_file))
         os.remove(temp_backing_file)
-        
-        # Use a subset of seed events for conditioning
+
+        # Use a subset of seed events for conditioning (every other event)
         seed_subset = []
         for event in seed_events:
-            # Keep every other event from the seed melody
             if len(seed_subset) % 2 == 0:
                 seed_subset.append(event)
-        
+
         # Combine subset of seed events with backing events
         combined_events = backing_events + seed_subset
-        
+
         print(f"Generating lead melody with {len(combined_events)} conditioning events...")
-        
+
         try:
             # Generate multiple variations and select the most interesting one
             num_variations = 3
             best_melody = None
             best_note_count = 0
-            
+
             for i in range(num_variations):
                 # Generate with combined seed conditioning
                 generated_events = generate(
@@ -390,50 +373,50 @@ class AMTBackingGenerator:
                     controls=combined_events,
                     top_p=0.9  # Slightly higher for more creative generation
                 )
-                
+
                 # Convert back to MIDI
                 generated_midi = events_to_midi(generated_events)
-                
+
                 # Convert to pretty_midi for easier manipulation
                 temp_file = self.output_dir / f'temp_generated_{i}.mid'
                 generated_midi.save(str(temp_file))
                 pretty_generated = pretty_midi.PrettyMIDI(str(temp_file))
                 os.remove(temp_file)
-                
+
                 # Process the generated melody
                 valid_notes = []
                 current_time = 0
-                
+
                 # Sort all notes by start time
                 all_notes = []
                 for instrument in pretty_generated.instruments:
                     if not instrument.is_drum:
                         all_notes.extend(instrument.notes)
                 all_notes.sort(key=lambda x: x.start)
-                
+
                 # Filter for monophonic melody with more variety
                 for note in all_notes:
-                    # Keep notes in guitar-like range (72-96) - even higher for better separation
-                    if 72 <= note.pitch <= 96:  # Adjusted range for higher melody
+                    # Keep notes in guitar-like range (72-96)
+                    if 72 <= note.pitch <= 96:
                         # Ensure valid timing
                         start_time = max(0, note.start)
                         end_time = min(duration_seconds, note.end)
-                        
+
                         # Skip notes with invalid timing
                         if end_time <= start_time:
                             continue
-                        
+
                         # Skip if this note overlaps with the current note
                         if start_time < current_time:
                             continue
-                        
+
                         # Add more variation to note durations
-                        duration = min(0.5, max(0.0625, end_time - start_time))  # 16th to 8th notes
-                        
+                        duration = min(0.5, max(0.0625, end_time - start_time))
+
                         # Adjust velocity for better dynamics
-                        base_velocity = min(120, max(90, note.velocity))  # Higher minimum velocity
+                        base_velocity = min(120, max(90, note.velocity))
                         velocity = int(base_velocity * (0.9 + (0.2 * (note.pitch % 12) / 12)))
-                        
+
                         # Create a new note with adjusted parameters
                         new_note = pretty_midi.Note(
                             velocity=velocity,
@@ -443,16 +426,15 @@ class AMTBackingGenerator:
                         )
                         valid_notes.append(new_note)
                         current_time = new_note.end
-                
+
                 # Select the variation with the most notes (most interesting)
                 if len(valid_notes) > best_note_count:
                     best_note_count = len(valid_notes)
                     best_melody = valid_notes
-            
+
             if best_melody:
                 # Create a new MIDI file for the melody
-                melody_midi = pretty_midi.PrettyMIDI(initial_tempo=240)  # Match backing track tempo
-                # Use a bright synth sound for the lead
+                melody_midi = pretty_midi.PrettyMIDI(initial_tempo=240)
                 synth_lead = pretty_midi.Instrument(program=81)  # Lead 2 (sawtooth)
                 synth_lead.notes = best_melody
                 melody_midi.instruments.append(synth_lead)
@@ -460,7 +442,7 @@ class AMTBackingGenerator:
             else:
                 print("No suitable notes found in any generated variation")
                 return None
-            
+
         except Exception as e:
             print(f"Generation failed: {e}")
             return None
