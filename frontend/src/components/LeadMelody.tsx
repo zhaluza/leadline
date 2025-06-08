@@ -2,7 +2,7 @@ import { useState } from "react";
 
 interface LeadMelodyProps {
   generationId: string | null;
-  onGenerationComplete: (audioUrl: string) => void;
+  onGenerationComplete: (audioUrl: string, combinedAudioUrl?: string) => void;
   onError: (error: string) => void;
 }
 
@@ -41,7 +41,12 @@ export default function LeadMelody({
       }
 
       const data = await response.json();
-      onGenerationComplete(`http://localhost:8000${data.audio_url}`);
+      onGenerationComplete(
+        `http://localhost:8000${data.audio_url}`,
+        data.combined_audio_url
+          ? `http://localhost:8000${data.combined_audio_url}`
+          : undefined
+      );
     } catch (error) {
       onError(
         error instanceof Error
@@ -61,13 +66,13 @@ export default function LeadMelody({
         <button
           onClick={handleGenerate}
           disabled={isGenerating || !generationId}
-          className={`w-full py-2 px-4 rounded-lg font-medium transition-colors
+          className={`w-full py-3 px-4 rounded-lg font-semibold text-lg transition-colors
             ${
               !generationId
-                ? "bg-gray-700 text-gray-400 cursor-not-allowed"
+                ? "bg-gray-800 text-gray-400 cursor-not-allowed border border-gray-700"
                 : isGenerating
-                ? "bg-gray-700 text-gray-300 cursor-not-allowed"
-                : "bg-indigo-800 hover:bg-indigo-900 text-white shadow-md hover:shadow-lg"
+                ? "bg-gray-800 text-gray-400 cursor-not-allowed border border-gray-700"
+                : "bg-indigo-900 hover:bg-indigo-950 text-white border-2 border-indigo-700 hover:border-indigo-600 shadow-lg hover:shadow-xl"
             }`}
         >
           {!generationId

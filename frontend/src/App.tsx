@@ -2,11 +2,11 @@ import { useState } from "react";
 import BackingTrack from "./components/BackingTrack";
 import LeadMelody from "./components/LeadMelody";
 import AudioPlayer from "./components/AudioPlayer";
-import "./App.css";
 
 function App() {
   const [backingTrackUrl, setBackingTrackUrl] = useState<string | null>(null);
   const [leadMelodyUrl, setLeadMelodyUrl] = useState<string | null>(null);
+  const [combinedTrackUrl, setCombinedTrackUrl] = useState<string | null>(null);
   const [generationId, setGenerationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -16,11 +16,17 @@ function App() {
   ) => {
     setBackingTrackUrl(audioUrl);
     setGenerationId(generationId);
+    setLeadMelodyUrl(null);
+    setCombinedTrackUrl(null);
     setError(null);
   };
 
-  const handleLeadMelodyComplete = (audioUrl: string) => {
+  const handleLeadMelodyComplete = (
+    audioUrl: string,
+    combinedAudioUrl?: string
+  ) => {
     setLeadMelodyUrl(audioUrl);
+    if (combinedAudioUrl) setCombinedTrackUrl(combinedAudioUrl);
     setError(null);
   };
 
@@ -75,6 +81,14 @@ function App() {
             {leadMelodyUrl && (
               <div className="mt-4">
                 <AudioPlayer audioUrl={leadMelodyUrl} label="Lead Melody" />
+              </div>
+            )}
+            {combinedTrackUrl && (
+              <div className="mt-4">
+                <AudioPlayer
+                  audioUrl={combinedTrackUrl}
+                  label="Combined Track"
+                />
               </div>
             )}
           </div>
