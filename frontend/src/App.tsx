@@ -40,7 +40,7 @@ function App() {
       <div className="max-w-7xl mx-auto">
         <header className="mb-8">
           <h1 className="text-3xl md:text-4xl font-bold text-center text-blue-400">
-            AMT Backing Track Generator
+            Melody Machine
           </h1>
           <p className="text-center text-gray-300 mt-2">
             Generate AI-powered backing tracks and lead melodies
