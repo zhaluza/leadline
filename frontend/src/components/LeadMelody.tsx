@@ -12,13 +12,15 @@ export default function LeadMelody({
   onError,
 }: LeadMelodyProps) {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [showNoBackingTrackMsg, setShowNoBackingTrackMsg] = useState(false);
 
   const handleGenerate = async () => {
     if (!generationId) {
+      setShowNoBackingTrackMsg(true);
       onError("Please generate a backing track first");
       return;
     }
-
+    setShowNoBackingTrackMsg(false);
     setIsGenerating(true);
     try {
       const response = await fetch(
@@ -82,7 +84,7 @@ export default function LeadMelody({
             : "Generate Lead Melody"}
         </button>
 
-        {generationId && (
+        {showNoBackingTrackMsg && (
           <div className="text-yellow-600 text-sm mt-2">
             Please generate a backing track first
           </div>
