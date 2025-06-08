@@ -2,18 +2,19 @@ import { useState } from "react";
 
 interface BackingTrackProps {
   onGenerationComplete: (generationId: string, audioUrl: string) => void;
+  onError: (error: string) => void;
 }
 
-export const BackingTrack = ({ onGenerationComplete }: BackingTrackProps) => {
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export default function BackingTrack({
+  onGenerationComplete,
+  onError,
+}: BackingTrackProps) {
+  const [isGenerating, setIsGenerating] = useState(false);
   const [numBars, setNumBars] = useState(8);
   const [tempo, setTempo] = useState(120);
 
-  const generateBackingTrack = async () => {
-    setIsLoading(true);
-    setError(null);
-
+  const handleGenerate = async () => {
+    setIsGenerating(true);
     try {
       const response = await fetch("http://localhost:8000/api/backing", {
         method: "POST",
@@ -27,15 +28,23 @@ export const BackingTrack = ({ onGenerationComplete }: BackingTrackProps) => {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to generate backing track");
       }
 
       const data = await response.json();
-      onGenerationComplete(data.generation_id, data.audio_url);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      onGenerationComplete(
+        data.generation_id,
+        `http://localhost:8000${data.audio_url}`
+      );
+    } catch (error) {
+      onError(
+        error instanceof Error
+          ? error.message
+          : "Failed to generate backing track"
+      );
     } finally {
-      setIsLoading(false);
+      setIsGenerating(false);
     }
   };
 
@@ -73,19 +82,18 @@ export const BackingTrack = ({ onGenerationComplete }: BackingTrackProps) => {
         </div>
 
         <button
-          onClick={generateBackingTrack}
-          disabled={isLoading}
-          className={`w-full py-2 px-4 rounded-md text-white font-medium ${
-            isLoading
-              ? "bg-indigo-400 cursor-not-allowed"
-              : "bg-indigo-600 hover:bg-indigo-700"
-          }`}
+          onClick={handleGenerate}
+          disabled={isGenerating}
+          className={`w-full py-2 px-4 rounded-lg font-medium transition-colors
+            ${
+              isGenerating
+                ? "bg-gray-700 text-gray-300 cursor-not-allowed"
+                : "bg-indigo-800 hover:bg-indigo-900 text-white shadow-md hover:shadow-lg"
+            }`}
         >
-          {isLoading ? "Generating..." : "Generate Backing Track"}
+          {isGenerating ? "Generating..." : "Generate Backing Track"}
         </button>
-
-        {error && <div className="text-red-600 text-sm mt-2">{error}</div>}
       </div>
     </div>
   );
-};
+}

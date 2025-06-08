@@ -95,6 +95,7 @@ class AMTBackingGenerator:
             with tempfile.NamedTemporaryFile(suffix='.mid', delete=False) as temp_midi:
                 temp_midi_path = temp_midi.name
                 midi_file.write(temp_midi_path)
+                print(f"Saved temporary MIDI file to {temp_midi_path}")
             
             # Use fluidsynth to convert MIDI to audio
             cmd = [
@@ -108,17 +109,32 @@ class AMTBackingGenerator:
                 '-q'  # Quiet mode
             ]
             
-            print(f"Running command: {' '.join(cmd)}")
+            print(f"Running FluidSynth command: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             
             if result.returncode != 0:
                 print(f"Fluidsynth error output: {result.stderr}")
                 raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
             
+            print(f"FluidSynth completed successfully. Output file: {temp_audio_path}")
+            
+            # Verify the output file exists and has content
+            if not os.path.exists(temp_audio_path):
+                raise FileNotFoundError(f"FluidSynth did not create output file at {temp_audio_path}")
+            
+            file_size = os.path.getsize(temp_audio_path)
+            print(f"Generated audio file size: {file_size} bytes")
+            
+            if file_size == 0:
+                raise ValueError("FluidSynth generated an empty audio file")
+            
             # Read the generated audio file
             audio_data = np.frombuffer(open(temp_audio_path, 'rb').read(), dtype=np.int16)
+            print(f"Read audio data: shape={audio_data.shape}, dtype={audio_data.dtype}")
+            
             # Convert to float32 and normalize
             audio_data = audio_data.astype(np.float32) / 32768.0
+            print(f"Normalized audio data: min={np.min(audio_data)}, max={np.max(audio_data)}")
             
             return audio_data
             
@@ -137,8 +153,9 @@ class AMTBackingGenerator:
             try:
                 os.unlink(temp_audio_path)
                 os.unlink(temp_midi_path)
-            except:
-                pass
+                print("Cleaned up temporary files")
+            except Exception as e:
+                print(f"Error cleaning up temporary files: {e}")
 
     def _get_num_bars_for_duration(self, duration_seconds, tempo, beats_per_bar=4):
         """Helper to calculate the number of bars needed for a given duration and tempo."""

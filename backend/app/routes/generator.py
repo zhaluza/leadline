@@ -9,13 +9,15 @@ from typing import Optional
 import json
 import time
 from functools import wraps
+import numpy as np
+from scipy.io import wavfile
 
 from app.core.generator import AMTBackingGenerator
 
 router = APIRouter()
 
-# Get the project root directory (two levels up from this file)
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+# Get the project root directory (three levels up from this file)
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 SOUNDFONT_PATH = PROJECT_ROOT / "soundfonts" / "MuseScore_General.sf3"
 
 def retry_on_error(max_retries=3, delay=1):
@@ -80,12 +82,38 @@ async def generate_backing(request: GenerationRequest):
         # Save MIDI file
         midi_path = output_dir / "backing.mid"
         backing_track.write(str(midi_path))
+        print(f"Saved MIDI file to {midi_path}")
 
         # Save audio file
         audio_path = output_dir / "backing.wav"
+        print(f"Generating audio file at {audio_path}")
         audio_data = generator.midi_to_audio(backing_track)
-        with open(audio_path, 'wb') as f:
-            f.write(audio_data.tobytes())
+        
+        # Verify audio data
+        if audio_data is None or len(audio_data) == 0:
+            raise ValueError("Generated audio data is empty")
+        
+        print(f"Audio data shape: {audio_data.shape}, dtype: {audio_data.dtype}")
+        print(f"Audio data min: {np.min(audio_data)}, max: {np.max(audio_data)}")
+        
+        # Ensure audio data is in the correct range (-1 to 1)
+        if np.max(np.abs(audio_data)) > 1.0:
+            print("Normalizing audio data to [-1, 1] range")
+            audio_data = np.clip(audio_data, -1.0, 1.0)
+        
+        # Convert to 16-bit PCM
+        audio_data = (audio_data * 32767).astype(np.int16)
+        
+        # Write WAV file with proper headers using scipy
+        sample_rate = 44100  # Standard sample rate
+        wavfile.write(str(audio_path), sample_rate, audio_data)
+        
+        # Verify file was written
+        if not audio_path.exists():
+            raise FileNotFoundError(f"Failed to write audio file to {audio_path}")
+        
+        file_size = audio_path.stat().st_size
+        print(f"Audio file written: {audio_path}, size: {file_size} bytes")
 
         return {
             "generation_id": generation_id,
