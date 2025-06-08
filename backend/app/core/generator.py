@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import re
 
 class AMTBackingGenerator:
     def __init__(self, model_name='stanford-crfm/music-medium-800k', soundfont_path=None):
@@ -422,4 +423,161 @@ class AMTBackingGenerator:
                 f.write(audio_data.tobytes())
             print(f"Saved audio to {audio_path}")
         
-        return self.preview_audio(midi_file) 
+        return self.preview_audio(midi_file)
+
+    def _parse_chord(self, chord_name: str, key_offset: int = 0) -> list[int]:
+        """Parse a chord name (e.g., 'C', 'Am', 'F#m7') and return MIDI note numbers."""
+        # Define note names and their semitone offsets from C
+        note_names = {
+            'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3,
+            'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8,
+            'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11
+        }
+        
+        # Define chord types and their intervals
+        chord_types = {
+            '': [0, 4, 7],  # Major
+            'm': [0, 3, 7],  # Minor
+            'dim': [0, 3, 6],  # Diminished
+            'aug': [0, 4, 8],  # Augmented
+            '7': [0, 4, 7, 10],  # Dominant 7th
+            'm7': [0, 3, 7, 10],  # Minor 7th
+            'maj7': [0, 4, 7, 11],  # Major 7th
+            'dim7': [0, 3, 6, 9],  # Diminished 7th
+            'sus2': [0, 2, 7],  # Suspended 2nd
+            'sus4': [0, 5, 7],  # Suspended 4th
+        }
+        
+        # Parse the chord name
+        chord_name = chord_name.strip()
+        
+        # Extract the root note and chord type
+        # Handle sharp/flat notes
+        if len(chord_name) >= 2 and chord_name[1] in '#b':
+            root_note = chord_name[:2]
+            chord_type = chord_name[2:]
+        else:
+            root_note = chord_name[0]
+            chord_type = chord_name[1:]
+        
+        # Get the root note offset
+        if root_note not in note_names:
+            raise ValueError(f"Unknown note name: {root_note}")
+        
+        root_offset = note_names[root_note]
+        
+        # Get the chord intervals
+        if chord_type not in chord_types:
+            # Default to major if unknown
+            intervals = chord_types['']
+        else:
+            intervals = chord_types[chord_type]
+        
+        # Calculate MIDI note numbers (C4 = 60)
+        base_note = 60 + key_offset + root_offset
+        chord_notes = [base_note + interval for interval in intervals]
+        
+        return chord_notes
+
+    def _get_key_offset(self, key: str) -> int:
+        """Convert a key name to its semitone offset from C."""
+        key_offsets = {
+            'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3,
+            'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8,
+            'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11
+        }
+        
+        if key not in key_offsets:
+            raise ValueError(f"Unknown key: {key}")
+        
+        return key_offsets[key]
+
+    def create_backing_track_with_chords(self, chord_progression: list[str], key: str = "C", num_bars: int = 8, tempo: int = 120):
+        """Create a backing track with custom chord progression including drums, bass, and piano."""
+        beats_per_bar = 4
+        seconds_per_bar = 60.0 / tempo * beats_per_bar
+        print(f"[DEBUG] Backing with chords: tempo={tempo}, key={key}, chords={chord_progression}")
+        
+        midi = pretty_midi.PrettyMIDI(initial_tempo=tempo)
+        
+        # Get key offset
+        key_offset = self._get_key_offset(key)
+        
+        # Parse chords to get note numbers
+        chord_notes_list = []
+        for chord in chord_progression:
+            try:
+                notes = self._parse_chord(chord, key_offset)
+                chord_notes_list.append(notes)
+                print(f"[DEBUG] Chord {chord} -> notes {notes}")
+            except ValueError as e:
+                print(f"Error parsing chord {chord}: {e}")
+                # Fallback to C major
+                chord_notes_list.append([60, 64, 67])
+        
+        # Repeat chord progression to fill num_bars
+        full_progression = (chord_notes_list * ((num_bars // len(chord_notes_list)) + 1))[:num_bars]
+        
+        # Piano/Chord part
+        piano = pretty_midi.Instrument(program=0)  # Acoustic Grand Piano
+        for i, chord in enumerate(full_progression):
+            start_time = i * seconds_per_bar
+            end_time = start_time + seconds_per_bar
+            for note_pitch in chord:
+                # Add root note and octave
+                note = pretty_midi.Note(velocity=80, pitch=note_pitch, start=start_time, end=end_time)
+                piano.notes.append(note)
+                # Add octave above for fuller sound
+                note = pretty_midi.Note(velocity=70, pitch=note_pitch + 12, start=start_time, end=end_time)
+                piano.notes.append(note)
+        midi.instruments.append(piano)
+        
+        # Bass part
+        bass = pretty_midi.Instrument(program=32)  # Acoustic Bass
+        for i, chord in enumerate(full_progression):
+            start_time = i * seconds_per_bar
+            sixteenth_note_duration = seconds_per_bar / 16
+            for j in range(16):
+                note_start = start_time + (j * sixteenth_note_duration)
+                note_end = note_start + (sixteenth_note_duration / 4)
+                beat_position = j % 4
+                if beat_position == 0 and j > 0:
+                    # Play root note of chord on beat
+                    root_note = chord[0] - 12  # One octave below
+                    note = pretty_midi.Note(velocity=90, pitch=root_note, start=note_start, end=note_end)
+                    bass.notes.append(note)
+                elif beat_position == 2:
+                    # Play fifth on off-beat
+                    if len(chord) >= 3:
+                        fifth_note = chord[2] - 12  # One octave below
+                        note = pretty_midi.Note(velocity=70, pitch=fifth_note, start=note_start, end=note_end)
+                        bass.notes.append(note)
+        midi.instruments.append(bass)
+        
+        # Drums part
+        drums = pretty_midi.Instrument(program=0, is_drum=True)
+        for i in range(num_bars):
+            start_time = i * seconds_per_bar
+            beat_duration = seconds_per_bar / 4
+            
+            # Kick drum on beats 1 and 3
+            kick_note = pretty_midi.Note(velocity=100, pitch=36, start=start_time, end=start_time + 0.1)
+            drums.notes.append(kick_note)
+            kick_note = pretty_midi.Note(velocity=100, pitch=36, start=start_time + 2*beat_duration, end=start_time + 2*beat_duration + 0.1)
+            drums.notes.append(kick_note)
+            
+            # Snare on beats 2 and 4
+            snare_note = pretty_midi.Note(velocity=90, pitch=38, start=start_time + beat_duration, end=start_time + beat_duration + 0.1)
+            drums.notes.append(snare_note)
+            snare_note = pretty_midi.Note(velocity=90, pitch=38, start=start_time + 3*beat_duration, end=start_time + 3*beat_duration + 0.1)
+            drums.notes.append(snare_note)
+            
+            # Hi-hat on every eighth note
+            eighth_duration = seconds_per_bar / 8
+            for j in range(8):
+                hat_start = start_time + j * eighth_duration
+                hat_note = pretty_midi.Note(velocity=60, pitch=42, start=hat_start, end=hat_start + 0.05)
+                drums.notes.append(hat_note)
+        
+        midi.instruments.append(drums)
+        return midi 

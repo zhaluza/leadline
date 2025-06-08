@@ -59,6 +59,13 @@ class GenerationRequest(BaseModel):
     num_bars: int = 8
     tempo: int = 120
     key: Optional[int] = 60
+    chord_progression: Optional[list[str]] = None  # e.g., ["C", "Am", "F", "G"]
+
+class ChordBackingRequest(BaseModel):
+    num_bars: int = 8
+    tempo: int = 120
+    key: str = "C"  # e.g., "C", "G", "F#", etc.
+    chord_progression: list[str]  # e.g., ["C", "Am", "F", "G"]
 
 # Store for active generation tasks
 active_tasks = {}
@@ -124,6 +131,73 @@ async def generate_backing(request: GenerationRequest):
 
     except Exception as e:
         print(f"Error generating backing track: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/backing/chords")
+@retry_on_error(max_retries=3, delay=2)
+async def generate_backing_with_chords(request: ChordBackingRequest):
+    """Generate a backing track with custom chord progression and return both MIDI and audio files."""
+    try:
+        # Generate unique ID for this generation
+        generation_id = str(uuid.uuid4())
+        output_dir = Path("static") / generation_id
+        output_dir.mkdir(exist_ok=True)
+
+        # Generate backing track with custom chords
+        backing_track = generator.create_backing_track_with_chords(
+            chord_progression=request.chord_progression,
+            key=request.key,
+            num_bars=request.num_bars,
+            tempo=request.tempo
+        )
+
+        # Save MIDI file
+        midi_path = output_dir / "backing.mid"
+        backing_track.write(str(midi_path))
+        print(f"Saved MIDI file to {midi_path}")
+
+        # Save audio file
+        audio_path = output_dir / "backing.wav"
+        print(f"Generating audio file at {audio_path}")
+        audio_data = generator.midi_to_audio(backing_track)
+        
+        # Verify audio data
+        if audio_data is None or len(audio_data) == 0:
+            raise ValueError("Generated audio data is empty")
+        
+        print(f"Audio data shape: {audio_data.shape}, dtype: {audio_data.dtype}")
+        print(f"Audio data min: {np.min(audio_data)}, max: {np.max(audio_data)}")
+        
+        # Ensure audio data is in the correct range (-1 to 1)
+        if np.max(np.abs(audio_data)) > 1.0:
+            print("Normalizing audio data to [-1, 1] range")
+            audio_data = np.clip(audio_data, -1.0, 1.0)
+        
+        # Convert to 16-bit PCM
+        audio_data = (audio_data * 32767).astype(np.int16)
+        
+        # Write WAV file with proper headers using scipy
+        sample_rate = 44100  # Standard sample rate
+        wavfile.write(str(audio_path), sample_rate, audio_data)
+        
+        # Verify file was written
+        if not audio_path.exists():
+            raise FileNotFoundError(f"Failed to write audio file to {audio_path}")
+        
+        file_size = audio_path.stat().st_size
+        print(f"Audio file written: {audio_path}, size: {file_size} bytes")
+
+        return {
+            "generation_id": generation_id,
+            "midi_url": f"/static/{generation_id}/backing.mid",
+            "audio_url": f"/static/{generation_id}/backing.wav",
+            "status": "completed",
+            "chord_progression": request.chord_progression,
+            "key": request.key
+        }
+
+    except Exception as e:
+        print(f"Error generating backing track with chords: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/seed")
