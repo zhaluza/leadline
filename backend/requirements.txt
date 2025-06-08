@@ -1,0 +1,14 @@
+torch>=2.0.0
+transformers>=4.30.0
+pretty-midi>=0.2.10
+numpy>=1.24.0
+anticipation @ git+https://github.com/jthickstun/anticipation.git
+fastapi>=0.68.0
+uvicorn>=0.15.0
+python-multipart>=0.0.5
+aiofiles>=0.8.0
+python-jose[cryptography]>=3.3.0
+# Note: fluidsynth requires system-level installation:
+# macOS: brew install fluid-synth
+# Ubuntu/Debian: sudo apt-get install fluidsynth
+# Windows: Download from https://www.fluidsynth.org/ 
