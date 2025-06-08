@@ -4,7 +4,8 @@ pretty-midi>=0.2.10
 numpy>=1.24.0
 anticipation @ git+https://github.com/jthickstun/anticipation.git
 fastapi>=0.68.0
-uvicorn>=0.15.0
+uvicorn>=0.15.0  # Primary server
+hypercorn>=0.14.3  # Fallback server
 python-multipart>=0.0.5
 aiofiles>=0.8.0
 python-jose[cryptography]>=3.3.0

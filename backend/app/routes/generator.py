@@ -7,11 +7,50 @@ from pathlib import Path
 import uuid
 from typing import Optional
 import json
+import time
+from functools import wraps
 
 from app.core.generator import AMTBackingGenerator
 
 router = APIRouter()
-generator = AMTBackingGenerator()
+
+# Get the project root directory (two levels up from this file)
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+SOUNDFONT_PATH = PROJECT_ROOT / "soundfonts" / "MuseScore_General.sf3"
+
+def retry_on_error(max_retries=3, delay=1):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        print(f"Attempt {attempt + 1} failed: {str(e)}")
+                        print(f"Retrying in {delay} seconds...")
+                        time.sleep(delay)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed after {max_retries} attempts. Last error: {str(last_error)}"
+            )
+        return wrapper
+    return decorator
+
+# Initialize generator with soundfont
+try:
+    print(f"Initializing generator with soundfont: {SOUNDFONT_PATH}")
+    if not SOUNDFONT_PATH.exists():
+        raise FileNotFoundError(f"Soundfont not found at {SOUNDFONT_PATH}")
+    generator = AMTBackingGenerator(soundfont_path=str(SOUNDFONT_PATH))
+except Exception as e:
+    print(f"Error initializing generator: {e}")
+    raise HTTPException(
+        status_code=500,
+        detail=f"Failed to initialize generator: {str(e)}"
+    )
 
 # Models for request validation
 class GenerationRequest(BaseModel):
@@ -23,6 +62,7 @@ class GenerationRequest(BaseModel):
 active_tasks = {}
 
 @router.post("/backing")
+@retry_on_error(max_retries=3, delay=2)
 async def generate_backing(request: GenerationRequest):
     """Generate a backing track and return both MIDI and audio files."""
     try:
@@ -55,6 +95,7 @@ async def generate_backing(request: GenerationRequest):
         }
 
     except Exception as e:
+        print(f"Error generating backing track: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/seed")
