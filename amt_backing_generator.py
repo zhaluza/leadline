@@ -1,3 +1,50 @@
+"""
+AMT Backing Track Generator
+==========================
+
+This module provides the AMTBackingGenerator class, which allows musicians and developers to programmatically generate synthwave-style backing tracks and AI-generated lead melodies using the Anticipatory Music Transformer (AMT) model.
+
+Features:
+---------
+- Generate synthwave backing tracks with chords, bass, and drums, at any tempo and number of bars.
+- Generate seed melodies in a synthwave/guitar style, rhythmically aligned with the backing track.
+- Use the AMT model to generate lead melodies conditioned on the backing track and seed melody.
+- Convert MIDI to audio using FluidSynth or pretty_midi for easy previewing.
+- Save and preview all generated tracks (backing, seed, lead, and combined).
+
+Main Class:
+-----------
+- AMTBackingGenerator
+    - create_backing_track(num_bars=8, tempo=120):
+        Generate a synthwave-style backing track for a given number of bars and tempo.
+    - create_seed_melody(key=60, num_bars=8, tempo=120):
+        Generate a seed melody in the given key, number of bars, and tempo.
+    - generate_lead_melody(backing_midi, num_bars=8, tempo=120):
+        Generate an AI lead melody using AMT, conditioned on the backing track and seed melody.
+    - preview_audio(midi_file, sample_rate=44100):
+        Convert a MIDI file to audio for quick previewing.
+    - save_and_preview(midi_file, filename):
+        Save a MIDI file and its audio rendering to disk, and preview the audio.
+
+Typical Usage:
+--------------
+    generator = AMTBackingGenerator()
+    backing = generator.create_backing_track(num_bars=8, tempo=120)
+    seed = generator.create_seed_melody(num_bars=8, tempo=120)
+    lead = generator.generate_lead_melody(backing, num_bars=8, tempo=120)
+    generator.preview_audio(backing)
+    generator.preview_audio(seed)
+    generator.preview_audio(lead)
+    generator.save_and_preview(backing, "backing_track.mid")
+    generator.save_and_preview(lead, "lead_melody.mid")
+
+Notes:
+------
+- All timing and musical structure is based on bars and tempo, not seconds.
+- The AMT model is loaded from HuggingFace and can run on CPU, CUDA, or Apple MPS.
+- FluidSynth is recommended for high-quality audio rendering of MIDI files.
+"""
+
 import torch
 from transformers import AutoModelForCausalLM
 from anticipation.sample import generate
@@ -131,206 +178,134 @@ class AMTBackingGenerator:
             except:
                 pass
 
-    def create_backing_track(self, duration_seconds=24, tempo=240):
+    def _get_num_bars_for_duration(self, duration_seconds, tempo, beats_per_bar=4):
+        """Helper to calculate the number of bars needed for a given duration and tempo."""
+        seconds_per_bar = 60.0 / tempo * beats_per_bar
+        return int(np.ceil(duration_seconds / seconds_per_bar)), seconds_per_bar
+
+    def create_backing_track(self, num_bars=8, tempo=120):
         """Create a synthwave-style backing track with drums, bass, and synth chords."""
-        # Convert BPM to microseconds per quarter note
-        microseconds_per_quarter = int(60000000 / tempo)
-        
-        # Create MIDI file with the correct tempo
+        beats_per_bar = 4
+        seconds_per_bar = 60.0 / tempo * beats_per_bar
+        print(f"[DEBUG] Backing: tempo={tempo}, beats_per_bar={beats_per_bar}, seconds_per_bar={seconds_per_bar}")
         midi = pretty_midi.PrettyMIDI(initial_tempo=tempo)
-        
-        # Add synth pad for chords (using a warm pad sound)
-        synth_pad = pretty_midi.Instrument(program=89)  # Warm Pad
-        
-        # Synthwave chord progression in C major: C - G - Am - F
-        # Extended to 8 bars by repeating the progression
         chord_progression = [
-            [60, 64, 67],  # C major (C4, E4, G4)
-            [67, 71, 74],  # G major (G4, B4, D5)
-            [57, 60, 64],  # A minor (A3, C4, E4)
-            [65, 69, 72],  # F major (F4, A4, C5)
-        ] * 2  # Repeat the progression for 8 bars
-        
-        # Calculate actual time per bar at 240 BPM
-        seconds_per_bar = 60.0 / tempo * 4  # 4 beats per bar
-        
-        # Add sustained chords with synth pad
-        for i, chord in enumerate(chord_progression):
+            [60, 64, 67],
+            [67, 71, 74],
+            [57, 60, 64],
+            [65, 69, 72],
+        ]
+        full_progression = (chord_progression * ((num_bars // len(chord_progression)) + 1))[:num_bars]
+        synth_pad = pretty_midi.Instrument(program=89)
+        note_debug_count = 0
+        for i, chord in enumerate(full_progression):
             start_time = i * seconds_per_bar
             end_time = start_time + seconds_per_bar
-            
-            # Add the main chord notes
             for note_pitch in chord:
-                # Main chord note
-                note = pretty_midi.Note(
-                    velocity=70,  # Moderate velocity for pad
-                    pitch=note_pitch,
-                    start=start_time,
-                    end=end_time
-                )
+                note = pretty_midi.Note(velocity=70, pitch=note_pitch, start=start_time, end=end_time)
                 synth_pad.notes.append(note)
-                
-                # Add an octave up for more fullness
-                note = pretty_midi.Note(
-                    velocity=65,
-                    pitch=note_pitch + 12,
-                    start=start_time,
-                    end=end_time
-                )
+                note = pretty_midi.Note(velocity=65, pitch=note_pitch + 12, start=start_time, end=end_time)
                 synth_pad.notes.append(note)
-        
+                if note_debug_count < 3:
+                    print(f"[DEBUG] Backing: Note pitch={note_pitch}, start={start_time}, end={end_time}")
+                    note_debug_count += 1
         midi.instruments.append(synth_pad)
-        
-        # Add synthwave bass with steady 16th notes
-        synth_bass = pretty_midi.Instrument(program=87)  # Lead 8 (bass + lead)
-        
-        for i, chord in enumerate(chord_progression):
+        synth_bass = pretty_midi.Instrument(program=87)
+        for i, chord in enumerate(full_progression):
             start_time = i * seconds_per_bar
-            sixteenth_note_duration = seconds_per_bar / 16  # Duration of a 16th note
-            
-            # Create a steady 16th note pattern
-            for j in range(16):  # 16 16th notes per bar
+            sixteenth_note_duration = seconds_per_bar / 16
+            for j in range(16):
                 note_start = start_time + (j * sixteenth_note_duration)
-                note_end = note_start + (sixteenth_note_duration / 4)  # Very short notes for tight bass
-                
-                # Skip the first 16th note of beats 2, 3, and 4
+                note_end = note_start + (sixteenth_note_duration / 4)
                 beat_position = j % 4
-                if beat_position == 0 and j > 0:  # If it's the first 16th note of beats 2, 3, or 4
+                if beat_position == 0 and j > 0:
                     continue
-                
-                # Cycle through chord notes for arpeggiation
                 chord_position = j % len(chord)
-                pitch = chord[chord_position] - 24  # Lower the bass by two octaves for better separation
-                
-                # Adjust velocity based on position in bar
-                if j % 4 == 0:  # On the beat
-                    velocity = 100
-                else:
-                    velocity = 90
-                
-                note = pretty_midi.Note(
-                    velocity=velocity,
-                    pitch=pitch,
-                    start=note_start,
-                    end=note_end
-                )
+                pitch = chord[chord_position] - 24
+                velocity = 100 if j % 4 == 0 else 90
+                note = pretty_midi.Note(velocity=velocity, pitch=pitch, start=note_start, end=note_end)
                 synth_bass.notes.append(note)
-        
         midi.instruments.append(synth_bass)
-        
-        # Add drum track with steady 16th note hi-hats
         drums = pretty_midi.Instrument(program=0, is_drum=True)
-        measures = 8  # Extended to 8 measures
-        
-        for measure in range(measures):
+        for measure in range(num_bars):
             measure_start = measure * seconds_per_bar
-            
-            for beat in range(4):  # 4 beats per bar
+            for beat in range(4):
                 beat_time = measure_start + (beat * seconds_per_bar / 4)
-                
-                # Kick drum on all beats (1, 2, 3, 4)
                 kick = pretty_midi.Note(velocity=100, pitch=36, start=beat_time, end=beat_time + 0.05)
                 drums.notes.append(kick)
-                
-                # Snare on beats 2 and 4
                 if beat in [1, 3]:
                     snare = pretty_midi.Note(velocity=90, pitch=38, start=beat_time, end=beat_time + 0.05)
                     drums.notes.append(snare)
-                
-                # Steady 16th note hi-hat pattern
-                for j in range(4):  # 4 16th notes per beat
+                for j in range(4):
                     hihat_time = beat_time + (j * seconds_per_bar / 16)
                     velocity = 75 if j in [0, 2] else 70
                     hihat = pretty_midi.Note(velocity=velocity, pitch=42, start=hihat_time, end=hihat_time + 0.025)
                     drums.notes.append(hihat)
-        
         midi.instruments.append(drums)
+        actual_tempos = midi.get_tempo_changes()[1]
+        print(f"[DEBUG] Backing track: actual MIDI tempos: {actual_tempos}")
         return midi
 
-    def create_seed_melody(self, key=60, duration_seconds=24):
-        """Create a seed melody using synthwave-style patterns in the given key."""
-        # Create a MIDI file for the seed melody
-        seed_midi = pretty_midi.PrettyMIDI(initial_tempo=240)
-        
-        # Create a synth lead instrument
-        synth_lead = pretty_midi.Instrument(program=81)  # Lead 2 (sawtooth)
-        
-        # Define a major scale with some additional notes for more interest
-        # Using C major with added notes (C, D, E, F, G, A, B)
-        # Keep everything in a reasonable guitar range (72-96)
-        base_key = 72  # Start at C5 (72)
+    def create_seed_melody(self, key=60, num_bars=8, tempo=120):
+        """Create a seed melody for generating a lead melody."""
+        beats_per_bar = 4
+        seconds_per_bar = 60.0 / tempo * beats_per_bar
+        print(f"[DEBUG] Seed: tempo={tempo}, beats_per_bar={beats_per_bar}, seconds_per_bar={seconds_per_bar}")
+        seed_midi = pretty_midi.PrettyMIDI(initial_tempo=tempo)
+        synth_lead = pretty_midi.Instrument(program=81)
+        base_key = key + 12
         scale = [base_key, base_key + 2, base_key + 4, base_key + 5, base_key + 7, base_key + 9, base_key + 11]
-        
-        # Calculate timing based on tempo
-        seconds_per_bar = 60.0 / 240 * 4  # 4 beats per bar at 240 BPM
-        sixteenth_note = seconds_per_bar / 4  # For consistent rhythm
-        
-        # Pattern 1: Syncopated rhythm with chord tones (bars 1-2)
+        quarter_note = seconds_per_bar / 4
+        eighth_note = seconds_per_bar / 8
+        sixteenth_note = seconds_per_bar / 16
+        # Use more natural synthwave/guitar rhythms
         pattern1 = [
-            (scale[0], sixteenth_note * 1.5),      # Held note
-            (scale[4], sixteenth_note * 0.5),      # Quick note
-            (scale[2], sixteenth_note),            # Regular note
-            (scale[4], sixteenth_note),            # Regular note
-            (scale[6], sixteenth_note * 1.5),      # Held note
-            (scale[4], sixteenth_note * 0.5),      # Quick note
-            (scale[2], sixteenth_note),            # Regular note
-            (scale[0], sixteenth_note),            # Regular note
+            (scale[0], quarter_note),
+            (scale[4], eighth_note),
+            (scale[2], eighth_note),
+            (scale[4], quarter_note),
         ]
-        
-        # Pattern 2: Alternating high and low notes (bars 3-4)
         pattern2 = [
-            (scale[4], sixteenth_note),            # High note
-            (scale[0], sixteenth_note),            # Low note
-            (scale[5], sixteenth_note),            # High note
-            (scale[2], sixteenth_note),            # Low note
-            (scale[6], sixteenth_note),            # High note
-            (scale[4], sixteenth_note),            # Low note
-            (scale[0], sixteenth_note),            # High note
-            (scale[5], sixteenth_note),            # Low note
+            (scale[4], eighth_note),
+            (scale[0], eighth_note),
+            (scale[5], quarter_note),
+            (scale[2], quarter_note),
         ]
-        
-        # Pattern 3: Ascending sequence with rhythm (bars 5-6)
         pattern3 = []
-        for i in range(8):
-            if i % 2 == 0:
-                pattern3.append((scale[i % 7], sixteenth_note * 1.5))  # Held note
-            else:
-                pattern3.append((scale[(i + 2) % 7], sixteenth_note * 0.5))  # Quick note
-        
-        # Pattern 4: Descending sequence with rhythm (bars 7-8)
+        for i in range(4):
+            pattern3.append((scale[i % 7], sixteenth_note))
+            pattern3.append((scale[(i + 2) % 7], eighth_note))
         pattern4 = []
-        for i in range(8):
-            if i % 2 == 0:
-                pattern4.append((scale[6 - (i % 7)], sixteenth_note))  # Regular note
-            else:
-                pattern4.append((scale[6 - (i % 7)], sixteenth_note))  # Regular note
-        
-        # Combine all patterns
+        for i in range(4):
+            pattern4.append((scale[6 - (i % 7)], sixteenth_note))
+            pattern4.append((scale[6 - (i % 7)], eighth_note))
         all_patterns = pattern1 + pattern2 + pattern3 + pattern4
-        
-        # Add notes to the track
+        bars_per_pattern = 1
+        total_patterns = int(np.ceil(num_bars / bars_per_pattern))
+        repeated_patterns = (all_patterns * ((total_patterns * 8) // len(all_patterns) + 1))[:num_bars * 8]
         current_time = 0
-        for pitch, duration in all_patterns:
-            note = pretty_midi.Note(
-                velocity=90,
-                pitch=pitch,
-                start=current_time,
-                end=current_time + duration
-            )
+        note_debug_count = 0
+        for pitch, duration in repeated_patterns:
+            if current_time + duration > num_bars * seconds_per_bar:
+                break
+            note = pretty_midi.Note(velocity=90, pitch=pitch, start=current_time, end=current_time + duration)
             synth_lead.notes.append(note)
+            if note_debug_count < 3:
+                print(f"[DEBUG] Seed: Note pitch={pitch}, start={current_time}, end={current_time + duration}")
+                note_debug_count += 1
             current_time += duration
-        
         seed_midi.instruments.append(synth_lead)
+        actual_tempos = seed_midi.get_tempo_changes()[1]
+        print(f"[DEBUG] Seed melody: actual MIDI tempos: {actual_tempos}")
         return seed_midi
 
-    def generate_lead_melody(self, backing_midi, duration_seconds=24):
+    def generate_lead_melody(self, backing_midi, num_bars=8, tempo=120):
         """Generate a lead melody using AMT over the backing track and a seed melody."""
         print("Converting backing track to events...")
-
-        # Create and convert seed melody to events
-        print("Creating seed melody for better generation...")
-        seed_midi = self.create_seed_melody(key=60)  # C major
-
+        beats_per_bar = 4
+        seconds_per_bar = 60.0 / tempo * beats_per_bar
+        seed_midi = self.create_seed_melody(key=60, num_bars=num_bars, tempo=tempo)
+        
         # Save the seed melody for reference
         seed_path = self.output_dir / 'seed_melody.mid'
         seed_midi.write(str(seed_path))
@@ -369,7 +344,7 @@ class AMTBackingGenerator:
                 generated_events = generate(
                     self.model,
                     start_time=0,
-                    end_time=duration_seconds,
+                    end_time=num_bars * seconds_per_bar,
                     controls=combined_events,
                     top_p=0.9  # Slightly higher for more creative generation
                 )
@@ -400,7 +375,7 @@ class AMTBackingGenerator:
                     if 72 <= note.pitch <= 96:
                         # Ensure valid timing
                         start_time = max(0, note.start)
-                        end_time = min(duration_seconds, note.end)
+                        end_time = min(num_bars * seconds_per_bar, note.end)
 
                         # Skip notes with invalid timing
                         if end_time <= start_time:
@@ -434,7 +409,7 @@ class AMTBackingGenerator:
 
             if best_melody:
                 # Create a new MIDI file for the melody
-                melody_midi = pretty_midi.PrettyMIDI(initial_tempo=240)
+                melody_midi = pretty_midi.PrettyMIDI(initial_tempo=tempo)
                 synth_lead = pretty_midi.Instrument(program=81)  # Lead 2 (sawtooth)
                 synth_lead.notes = best_melody
                 melody_midi.instruments.append(synth_lead)
