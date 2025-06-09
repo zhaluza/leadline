@@ -402,208 +402,219 @@ class AMTBackingGenerator:
         seed_events = valid_seed_events
 
         print(f"[DEBUG] Starting AMT generation with {len(seed_events)} seed events")
+        
         try:
-            # Generate multiple variations and select the most interesting one
-            num_variations = 3
-            best_melody = None
-            best_note_count = 0
-
-            for i in range(num_variations):
-                print(f"[DEBUG] Generating variation {i+1}/{num_variations}")
+            # Add more debugging for the model state
+            print(f"[DEBUG] Model device: {self.model.device}")
+            print(f"[DEBUG] Model dtype: {next(self.model.parameters()).dtype}")
+            print(f"[DEBUG] Generation start: {0}, end: {num_bars * seconds_per_bar}")
+            print(f"[DEBUG] Number of seed events: {len(seed_events)}")
+            print(f"[DEBUG] Seed events: {seed_events[:10]}...")  # Show first 10 events
+            
+            # Try a different approach: generate full 8 bars with strong seed conditioning
+            # The issue might be that the model doesn't understand partial generation well
+            try:
+                print("[DEBUG] Attempting full 8-bar generation with seed conditioning")
+                generated_events = generate(
+                    self.model,
+                    start_time=0,  # Start from beginning
+                    end_time=num_bars * seconds_per_bar,  # Full 8 bars
+                    controls=seed_events,  # Use seed events as conditioning
+                    top_p=0.7  # More conservative for better conditioning
+                )
+            except Exception as amt_error:
+                print(f"[DEBUG] AMT generate function failed: {amt_error}")
+                print("[DEBUG] This might be a compatibility issue with the anticipation library")
+                print("[DEBUG] Attempting alternative generation approach...")
+                
+                # Try with different parameters
                 try:
-                    print("[DEBUG] Calling AMT generate function")
-                    # Generate for the full 8 bars, using seed events as conditioning
-                    # The seed events represent the first bar, we want to generate the remaining 7 bars
-                    generation_duration = num_bars * seconds_per_bar  # Full 8 bars
-                    
-                    # Add more debugging for the model state
-                    print(f"[DEBUG] Model device: {self.model.device}")
-                    print(f"[DEBUG] Model dtype: {next(self.model.parameters()).dtype}")
-                    print(f"[DEBUG] Generation duration: {generation_duration}")
-                    print(f"[DEBUG] Number of seed events: {len(seed_events)}")
-                    
-                    # Try with more conservative parameters
-                    try:
-                        generated_events = generate(
-                            self.model,
-                            start_time=0,
-                            end_time=generation_duration,
-                            controls=seed_events,  # Use all seed events for conditioning
-                            top_p=0.8,  # More conservative
-                            temperature=0.8  # More conservative
-                        )
-                    except Exception as amt_error:
-                        print(f"[DEBUG] AMT generate function failed: {amt_error}")
-                        print("[DEBUG] This might be a compatibility issue with the anticipation library")
-                        print("[DEBUG] Attempting alternative generation approach...")
-                        
-                        # Try with different parameters
-                        try:
-                            generated_events = generate(
-                                self.model,
-                                start_time=0,
-                                end_time=generation_duration,
-                                controls=seed_events,
-                                top_p=0.9,
-                                temperature=1.0
-                            )
-                        except Exception as alt_error:
-                            print(f"[DEBUG] Alternative generation also failed: {alt_error}")
-                            print("[DEBUG] Skipping this variation due to AMT compatibility issues")
-                            continue
-                    print(f"[DEBUG] Generated {len(generated_events)} events for variation {i+1}")
-                    if len(generated_events) > 0:
-                        print(f"[DEBUG] First generated event: {generated_events[0]}")
-                        print(f"[DEBUG] Last generated event: {generated_events[-1]}")
-                        print(f"[DEBUG] Event types: {[type(event) for event in generated_events[:5]]}")
-                        print(f"[DEBUG] First 5 events: {generated_events[:5]}")
-                        
-                        # AMT events should be non-negative integers
-                        # Let's check the actual range of events
-                        if len(generated_events) > 0:
-                            min_event = min(generated_events)
-                            max_event = max(generated_events)
-                            print(f"[DEBUG] Event range: min={min_event}, max={max_event}")
-                            
-                            # Check for any non-integer events
-                            non_integer_events = [event for event in generated_events if not isinstance(event, int)]
-                            if non_integer_events:
-                                print(f"[DEBUG] Found {len(non_integer_events)} non-integer events: {non_integer_events[:5]}")
-                            
-                            # Filter out negative events (these are invalid)
-                            filtered_events = [event for event in generated_events if event >= 0]
-                            print(f"[DEBUG] Filtered from {len(generated_events)} to {len(filtered_events)} non-negative events")
-                            
-                            if len(filtered_events) == 0:
-                                print("[DEBUG] No valid events after filtering, skipping this variation")
-                                continue
-                            
-                            generated_events = filtered_events
-                        
-                except Exception as e:
-                    print(f"[DEBUG] Error in AMT generation for variation {i+1}: {e}")
-                    import traceback
-                    print(f"[DEBUG] AMT generation traceback: {traceback.format_exc()}")
-                    continue
-
-                # Convert back to MIDI
-                try:
-                    print(f"[DEBUG] Converting variation {i+1} to MIDI with {len(generated_events)} events")
-                    generated_midi = events_to_midi(generated_events)
-                    print(f"[DEBUG] Successfully converted variation {i+1} to MIDI")
-                except Exception as e:
-                    print(f"[DEBUG] Error converting variation {i+1} to MIDI: {e}")
-                    import traceback
-                    print(f"[DEBUG] MIDI conversion traceback: {traceback.format_exc()}")
-                    continue
-
-                # Convert to pretty_midi for easier manipulation
-                temp_file = self.output_dir / f'temp_generated_{i}.mid'
-                try:
-                    print(f"[DEBUG] Saving variation {i+1} to temporary file")
-                    generated_midi.save(str(temp_file))
-                    print(f"[DEBUG] Loading variation {i+1} into pretty_midi")
-                    pretty_generated = pretty_midi.PrettyMIDI(str(temp_file))
-                    print(f"[DEBUG] Successfully loaded variation {i+1} into pretty_midi")
-                except Exception as e:
-                    print(f"[DEBUG] Error processing variation {i+1} MIDI: {e}")
-                    import traceback
-                    print(f"[DEBUG] MIDI processing traceback: {traceback.format_exc()}")
-                    continue
-                finally:
-                    try:
-                        os.remove(temp_file)
-                        print(f"[DEBUG] Cleaned up temporary file for variation {i+1}")
-                    except Exception as e:
-                        print(f"[DEBUG] Warning: Could not remove temporary file for variation {i+1}: {e}")
-
-                # Process the generated melody
-                try:
-                    print(f"[DEBUG] Processing notes for variation {i+1}")
-                    valid_notes = []
-                    current_time = 0
-
-                    # Sort all notes by start time
-                    all_notes = []
-                    for instrument in pretty_generated.instruments:
-                        if not instrument.is_drum:
-                            all_notes.extend(instrument.notes)
-                    all_notes.sort(key=lambda x: x.start)
-                    print(f"[DEBUG] Found {len(all_notes)} notes in variation {i+1}")
-
-                    # Filter for monophonic melody with more variety
-                    for note in all_notes:
-                        # Keep notes in guitar-like range (60-84 for better range)
-                        if 60 <= note.pitch <= 84:
-                            # Ensure valid timing
-                            start_time = max(0, note.start)
-                            end_time = min(num_bars * seconds_per_bar, note.end)
-
-                            # Skip notes with invalid timing
-                            if end_time <= start_time:
-                                continue
-
-                            # Skip if this note overlaps with the current note
-                            if start_time < current_time:
-                                continue
-
-                            # Add more variation to note durations
-                            duration = min(0.5, max(0.0625, end_time - start_time))
-
-                            # Adjust velocity for better dynamics
-                            base_velocity = min(120, max(90, note.velocity))
-                            velocity = int(base_velocity * (0.9 + (0.2 * (note.pitch % 12) / 12)))
-
-                            # Create a new note with adjusted parameters
-                            new_note = pretty_midi.Note(
-                                velocity=velocity,
-                                pitch=note.pitch,
-                                start=start_time,
-                                end=start_time + duration
-                            )
-                            valid_notes.append(new_note)
-                            current_time = new_note.end
-
-                    print(f"[DEBUG] Filtered to {len(valid_notes)} valid notes in variation {i+1}")
-                    if len(valid_notes) > 0:
-                        print(f"[DEBUG] First valid note: pitch={valid_notes[0].pitch}, start={valid_notes[0].start}, end={valid_notes[0].end}")
-                        print(f"[DEBUG] Last valid note: pitch={valid_notes[-1].pitch}, start={valid_notes[-1].start}, end={valid_notes[-1].end}")
-
-                    # Select the variation with the most notes (most interesting)
-                    if len(valid_notes) > best_note_count:
-                        best_note_count = len(valid_notes)
-                        best_melody = valid_notes
-                        print(f"[DEBUG] New best variation found with {best_note_count} notes")
-                except Exception as e:
-                    print(f"[DEBUG] Error processing notes for variation {i+1}: {e}")
-                    import traceback
-                    print(f"[DEBUG] Note processing traceback: {traceback.format_exc()}")
-                    continue
-
-            if best_melody:
-                print(f"[DEBUG] Creating final melody with {len(best_melody)} notes")
-                try:
-                    # Create a new MIDI file for the melody
-                    melody_midi = pretty_midi.PrettyMIDI(initial_tempo=tempo)
-                    synth_lead = pretty_midi.Instrument(program=81)  # Lead 2 (sawtooth)
-                    synth_lead.notes = best_melody
-                    melody_midi.instruments.append(synth_lead)
-                    print("[DEBUG] Lead melody generation completed successfully")
-                    return melody_midi
-                except Exception as e:
-                    print(f"[DEBUG] Error creating final melody: {e}")
-                    import traceback
-                    print(f"[DEBUG] Final melody creation traceback: {traceback.format_exc()}")
+                    generated_events = generate(
+                        self.model,
+                        start_time=0,
+                        end_time=num_bars * seconds_per_bar,
+                        controls=seed_events,
+                        top_p=0.9
+                    )
+                except Exception as alt_error:
+                    print(f"[DEBUG] Alternative generation also failed: {alt_error}")
+                    print("[DEBUG] Skipping this variation due to AMT compatibility issues")
                     return None
-            else:
-                print("[DEBUG] No suitable notes found in any generated variation")
-                print("[DEBUG] Attempting to create fallback melody")
-                return self._create_fallback_melody(num_bars, tempo)
+            
+            print(f"[DEBUG] Generated {len(generated_events)} events for variation")
+            if len(generated_events) > 0:
+                print(f"[DEBUG] First generated event: {generated_events[0]}")
+                print(f"[DEBUG] Last generated event: {generated_events[-1]}")
+                print(f"[DEBUG] Event types: {[type(event) for event in generated_events[:5]]}")
+                print(f"[DEBUG] First 5 events: {generated_events[:5]}")
+                
+                # AMT events should be non-negative integers
+                if len(generated_events) > 0:
+                    min_event = min(generated_events)
+                    max_event = max(generated_events)
+                    print(f"[DEBUG] Event range: min={min_event}, max={max_event}")
+                    
+                    # Check for any non-integer events
+                    non_integer_events = [event for event in generated_events if not isinstance(event, int)]
+                    if non_integer_events:
+                        print(f"[DEBUG] Found {len(non_integer_events)} non-integer events: {non_integer_events[:5]}")
+                    
+                    # Filter out negative events (these are invalid)
+                    filtered_events = [event for event in generated_events if event >= 0]
+                    print(f"[DEBUG] Filtered from {len(generated_events)} to {len(filtered_events)} non-negative events")
+                    
+                    if len(filtered_events) == 0:
+                        print("[DEBUG] No valid events after filtering, skipping this variation")
+                        return None
+                    
+                    generated_events = filtered_events
+                
+        except Exception as e:
+            print(f"[DEBUG] Error in AMT generation: {e}")
+            import traceback
+            print(f"[DEBUG] AMT generation traceback: {traceback.format_exc()}")
+            return None
+
+        # Convert back to MIDI
+        try:
+            print(f"[DEBUG] Converting variation to MIDI with {len(generated_events)} events")
+            generated_midi = events_to_midi(generated_events)
+            print(f"[DEBUG] Successfully converted variation to MIDI")
+            
+            # Debug: Let's see what we got (skip the instruments check since it's a MidiFile, not PrettyMIDI)
+            print(f"[DEBUG] Generated MIDI file created successfully")
+            
+        except Exception as e:
+            print(f"[DEBUG] Error converting variation to MIDI: {e}")
+            import traceback
+            print(f"[DEBUG] MIDI conversion traceback: {traceback.format_exc()}")
+            return None
+
+        # Convert to pretty_midi for easier manipulation
+        temp_file = self.output_dir / f'temp_generated.mid'
+        try:
+            print(f"[DEBUG] Saving variation to temporary file")
+            generated_midi.save(str(temp_file))
+            print(f"[DEBUG] Loading variation into pretty_midi")
+            pretty_generated = pretty_midi.PrettyMIDI(str(temp_file))
+            print(f"[DEBUG] Successfully loaded variation into pretty_midi")
+        except Exception as e:
+            print(f"[DEBUG] Error processing variation MIDI: {e}")
+            import traceback
+            print(f"[DEBUG] MIDI processing traceback: {traceback.format_exc()}")
+            return None
+        finally:
+            try:
+                os.remove(temp_file)
+                print(f"[DEBUG] Cleaned up temporary file for variation")
+            except Exception as e:
+                print(f"[DEBUG] Warning: Could not remove temporary file for variation: {e}")
+
+        # Process the generated melody
+        try:
+            print(f"[DEBUG] Processing notes for variation")
+            valid_notes = []
+            current_time = 0
+
+            # Sort all notes by start time
+            all_notes = []
+            for instrument in pretty_generated.instruments:
+                if not instrument.is_drum:
+                    all_notes.extend(instrument.notes)
+            all_notes.sort(key=lambda x: x.start)
+            print(f"[DEBUG] Found {len(all_notes)} notes in variation")
+
+            # Filter for monophonic melody with more variety
+            for note in all_notes:
+                # Keep notes in guitar-like range (60-84 for better range)
+                if 60 <= note.pitch <= 84:
+                    # Ensure valid timing
+                    start_time = max(0, note.start)
+                    end_time = min(num_bars * seconds_per_bar, note.end)
+
+                    # Skip notes with invalid timing
+                    if end_time <= start_time:
+                        continue
+
+                    # Skip if this note overlaps with the current note
+                    if start_time < current_time:
+                        continue
+
+                    # Add more variation to note durations
+                    duration = min(0.5, max(0.0625, end_time - start_time))
+
+                    # Adjust velocity for better dynamics
+                    base_velocity = min(120, max(90, note.velocity))
+                    velocity = int(base_velocity * (0.9 + (0.2 * (note.pitch % 12) / 12)))
+
+                    # Create a new note with adjusted parameters
+                    new_note = pretty_midi.Note(
+                        velocity=velocity,
+                        pitch=note.pitch,
+                        start=start_time,
+                        end=start_time + duration
+                    )
+                    valid_notes.append(new_note)
+                    current_time = new_note.end
+
+            print(f"[DEBUG] Filtered to {len(valid_notes)} valid notes in variation")
+            if len(valid_notes) > 0:
+                print(f"[DEBUG] First valid note: pitch={valid_notes[0].pitch}, start={valid_notes[0].start}, end={valid_notes[0].end}")
+                print(f"[DEBUG] Last valid note: pitch={valid_notes[-1].pitch}, start={valid_notes[-1].start}, end={valid_notes[-1].end}")
+
+            best_melody = valid_notes
+            print(f"[DEBUG] New best variation found with {len(best_melody)} notes")
 
         except Exception as e:
-            print(f"[DEBUG] Generation failed with error: {e}")
+            print(f"[DEBUG] Error processing notes for variation: {e}")
             import traceback
-            print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+            print(f"[DEBUG] Note processing traceback: {traceback.format_exc()}")
+            return None
+
+        if best_melody:
+            print(f"[DEBUG] Creating final melody with {len(best_melody)} notes")
+            try:
+                # Create a new MIDI file for the melody
+                melody_midi = pretty_midi.PrettyMIDI(initial_tempo=tempo)
+                synth_lead = pretty_midi.Instrument(program=81)  # Lead 2 (sawtooth)
+                
+                # Add the seed melody notes first (bar 1)
+                seed_note_count = 0
+                for note in seed_midi.instruments[0].notes:
+                    synth_lead.notes.append(note)
+                    seed_note_count += 1
+                print(f"[DEBUG] Added {seed_note_count} seed notes to final melody")
+                
+                # Add the generated notes (bars 2-8)
+                generated_note_count = 0
+                for note in best_melody:
+                    synth_lead.notes.append(note)
+                    generated_note_count += 1
+                print(f"[DEBUG] Added {generated_note_count} generated notes to final melody")
+                
+                melody_midi.instruments.append(synth_lead)
+                
+                # Debug: Show the complete melody structure
+                print(f"[DEBUG] Final melody has {len(synth_lead.notes)} total notes")
+                if len(synth_lead.notes) > 0:
+                    print(f"[DEBUG] First note: pitch={synth_lead.notes[0].pitch}, start={synth_lead.notes[0].start}, end={synth_lead.notes[0].end}")
+                    print(f"[DEBUG] Last note: pitch={synth_lead.notes[-1].pitch}, start={synth_lead.notes[-1].start}, end={synth_lead.notes[-1].end}")
+                    
+                    # Show timing distribution
+                    first_bar_notes = [n for n in synth_lead.notes if n.start < seconds_per_bar]
+                    remaining_notes = [n for n in synth_lead.notes if n.start >= seconds_per_bar]
+                    print(f"[DEBUG] First bar (seed): {len(first_bar_notes)} notes")
+                    print(f"[DEBUG] Remaining bars (generated): {len(remaining_notes)} notes")
+                
+                print("[DEBUG] Lead melody generation completed successfully")
+                return melody_midi
+            except Exception as e:
+                print(f"[DEBUG] Error creating final melody: {e}")
+                import traceback
+                print(f"[DEBUG] Final melody creation traceback: {traceback.format_exc()}")
+                return None
+        else:
+            print("[DEBUG] No suitable notes found in any generated variation")
             print("[DEBUG] Attempting to create fallback melody")
             return self._create_fallback_melody(num_bars, tempo)
 
@@ -1015,62 +1026,102 @@ class AMTBackingGenerator:
                 )
 
                 # Convert back to MIDI
-                generated_midi = events_to_midi(generated_events)
+                try:
+                    print(f"[DEBUG] Converting variation {i+1} to MIDI with {len(generated_events)} events")
+                    generated_midi = events_to_midi(generated_events)
+                    print(f"[DEBUG] Successfully converted variation {i+1} to MIDI")
+                    
+                    # Debug: Let's see what we got (skip the instruments check since it's a MidiFile, not PrettyMIDI)
+                    print(f"[DEBUG] Generated MIDI file created successfully")
+                    
+                except Exception as e:
+                    print(f"[DEBUG] Error converting variation {i+1} to MIDI: {e}")
+                    import traceback
+                    print(f"[DEBUG] MIDI conversion traceback: {traceback.format_exc()}")
+                    continue
 
                 # Convert to pretty_midi for easier manipulation
                 temp_file = self.output_dir / f'temp_generated_{i}.mid'
-                generated_midi.save(str(temp_file))
-                pretty_generated = pretty_midi.PrettyMIDI(str(temp_file))
-                os.remove(temp_file)
+                try:
+                    print(f"[DEBUG] Saving variation {i+1} to temporary file")
+                    generated_midi.save(str(temp_file))
+                    print(f"[DEBUG] Loading variation {i+1} into pretty_midi")
+                    pretty_generated = pretty_midi.PrettyMIDI(str(temp_file))
+                    print(f"[DEBUG] Successfully loaded variation {i+1} into pretty_midi")
+                except Exception as e:
+                    print(f"[DEBUG] Error processing variation {i+1} MIDI: {e}")
+                    import traceback
+                    print(f"[DEBUG] MIDI processing traceback: {traceback.format_exc()}")
+                    continue
+                finally:
+                    try:
+                        os.remove(temp_file)
+                        print(f"[DEBUG] Cleaned up temporary file for variation {i+1}")
+                    except Exception as e:
+                        print(f"[DEBUG] Warning: Could not remove temporary file for variation {i+1}: {e}")
 
                 # Process the generated melody
-                valid_notes = []
-                current_time = 0
+                try:
+                    print(f"[DEBUG] Processing notes for variation {i+1}")
+                    valid_notes = []
+                    current_time = 0
 
-                # Sort all notes by start time
-                all_notes = []
-                for instrument in pretty_generated.instruments:
-                    if not instrument.is_drum:
-                        all_notes.extend(instrument.notes)
-                all_notes.sort(key=lambda x: x.start)
+                    # Sort all notes by start time
+                    all_notes = []
+                    for instrument in pretty_generated.instruments:
+                        if not instrument.is_drum:
+                            all_notes.extend(instrument.notes)
+                    all_notes.sort(key=lambda x: x.start)
+                    print(f"[DEBUG] Found {len(all_notes)} notes in variation {i+1}")
 
-                # Filter for monophonic melody with more variety
-                for note in all_notes:
-                    # Keep notes in guitar-like range (72-96)
-                    if 72 <= note.pitch <= 96:
-                        # Ensure valid timing
-                        start_time = max(0, note.start)
-                        end_time = min(num_bars * seconds_per_bar, note.end)
+                    # Filter for monophonic melody with more variety
+                    for note in all_notes:
+                        # Keep notes in guitar-like range (72-96)
+                        if 72 <= note.pitch <= 96:
+                            # Ensure valid timing
+                            start_time = max(0, note.start)
+                            end_time = min(num_bars * seconds_per_bar, note.end)
 
-                        # Skip notes with invalid timing
-                        if end_time <= start_time:
-                            continue
+                            # Skip notes with invalid timing
+                            if end_time <= start_time:
+                                continue
 
-                        # Skip if this note overlaps with the current note
-                        if start_time < current_time:
-                            continue
+                            # Skip if this note overlaps with the current note
+                            if start_time < current_time:
+                                continue
 
-                        # Add more variation to note durations
-                        duration = min(0.5, max(0.0625, end_time - start_time))
+                            # Add more variation to note durations
+                            duration = min(0.5, max(0.0625, end_time - start_time))
 
-                        # Adjust velocity for better dynamics
-                        base_velocity = min(120, max(90, note.velocity))
-                        velocity = int(base_velocity * (0.9 + (0.2 * (note.pitch % 12) / 12)))
+                            # Adjust velocity for better dynamics
+                            base_velocity = min(120, max(90, note.velocity))
+                            velocity = int(base_velocity * (0.9 + (0.2 * (note.pitch % 12) / 12)))
 
-                        # Create a new note with adjusted parameters
-                        new_note = pretty_midi.Note(
-                            velocity=velocity,
-                            pitch=note.pitch,
-                            start=start_time,
-                            end=start_time + duration
-                        )
-                        valid_notes.append(new_note)
-                        current_time = new_note.end
+                            # Create a new note with adjusted parameters
+                            new_note = pretty_midi.Note(
+                                velocity=velocity,
+                                pitch=note.pitch,
+                                start=start_time,
+                                end=start_time + duration
+                            )
+                            valid_notes.append(new_note)
+                            current_time = new_note.end
 
-                # Select the variation with the most notes (most interesting)
-                if len(valid_notes) > best_note_count:
-                    best_note_count = len(valid_notes)
-                    best_melody = valid_notes
+                    print(f"[DEBUG] Filtered to {len(valid_notes)} valid notes in variation {i+1}")
+                    if len(valid_notes) > 0:
+                        print(f"[DEBUG] First valid note: pitch={valid_notes[0].pitch}, start={valid_notes[0].start}, end={valid_notes[0].end}")
+                        print(f"[DEBUG] Last valid note: pitch={valid_notes[-1].pitch}, start={valid_notes[-1].start}, end={valid_notes[-1].end}")
+
+                    # Select the variation with the most notes (most interesting)
+                    if len(valid_notes) > best_note_count:
+                        best_note_count = len(valid_notes)
+                        best_melody = valid_notes
+                        print(f"[DEBUG] New best variation found with {best_note_count} notes")
+                except Exception as e:
+                    print(f"[DEBUG] Error processing notes for variation {i+1}: {e}")
+                    import traceback
+                    print(f"[DEBUG] Note processing traceback: {traceback.format_exc()}")
+                    continue
 
             if best_melody:
                 # Create a new MIDI file for the melody
