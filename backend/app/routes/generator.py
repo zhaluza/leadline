@@ -464,10 +464,10 @@ async def generate_lead_with_seed(generation_id: str, request: LeadMelodyRequest
 async def preview_seed_melody(generation_id: str, request: GenerationRequest):
     """Generate and preview the seed melody that will be used for lead generation."""
     try:
-        # Generate seed melody
+        # Generate seed melody for just 1 bar (this is what's actually used as seed)
         seed_melody = generator.create_seed_melody(
             key=request.key,
-            num_bars=request.num_bars,
+            num_bars=1,  # Only 1 bar as seed
             tempo=request.tempo
         )
         

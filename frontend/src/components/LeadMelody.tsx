@@ -18,12 +18,14 @@ export default function LeadMelody({
   onError,
 }: LeadMelodyProps) {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(false);
   const [showNoBackingTrackMsg, setShowNoBackingTrackMsg] = useState(false);
   const [seedNotes, setSeedNotes] = useState<SeedNote[]>([]);
   const [useCustomSeed, setUseCustomSeed] = useState(false);
   const [newNotePitch, setNewNotePitch] = useState(72);
   const [newNoteStart, setNewNoteStart] = useState(0);
   const [newNoteDuration, setNewNoteDuration] = useState(1);
+  const [seedPreviewUrl, setSeedPreviewUrl] = useState<string | null>(null);
 
   const noteNames = [
     "C",
@@ -56,6 +58,47 @@ export default function LeadMelody({
 
   const removeSeedNote = (index: number) => {
     setSeedNotes(seedNotes.filter((_, i) => i !== index));
+  };
+
+  const handlePreviewSeed = async () => {
+    if (!generationId) {
+      setShowNoBackingTrackMsg(true);
+      onError("Please generate a backing track first");
+      return;
+    }
+    setShowNoBackingTrackMsg(false);
+    setIsPreviewing(true);
+
+    try {
+      const response = await fetch(
+        `http://localhost:8000/api/lead/${generationId}/preview-seed`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            num_bars: 8,
+            tempo: 120,
+            key: 60, // C major
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to preview seed melody");
+      }
+
+      const data = await response.json();
+      setSeedPreviewUrl(`http://localhost:8000${data.audio_url}`);
+    } catch (error) {
+      onError(
+        error instanceof Error ? error.message : "Failed to preview seed melody"
+      );
+    } finally {
+      setIsPreviewing(false);
+    }
   };
 
   const handleGenerate = async () => {
@@ -124,6 +167,40 @@ export default function LeadMelody({
       </h2>
 
       <div className="space-y-4">
+        {/* Seed Melody Preview Section */}
+        <div className="p-3 bg-gray-700/30 rounded border border-gray-600">
+          <h3 className="text-sm font-medium text-gray-300 mb-2">
+            Seed Melody Preview
+          </h3>
+          <p className="text-xs text-gray-400 mb-3">
+            Preview the 1-bar seed melody that will be used to generate the full
+            8-bar lead melody
+          </p>
+
+          <div className="flex gap-2">
+            <button
+              onClick={handlePreviewSeed}
+              disabled={isPreviewing || !generationId}
+              className={`px-4 py-2 rounded text-sm font-medium transition-colors
+                ${
+                  !generationId
+                    ? "bg-gray-600 text-gray-400 cursor-not-allowed"
+                    : isPreviewing
+                    ? "bg-gray-600 text-gray-400 cursor-not-allowed"
+                    : "bg-green-600 hover:bg-green-700 text-white"
+                }`}
+            >
+              {isPreviewing ? "Generating Preview..." : "Preview Seed Melody"}
+            </button>
+
+            {seedPreviewUrl && (
+              <audio controls className="flex-1 h-10" src={seedPreviewUrl}>
+                Your browser does not support the audio element.
+              </audio>
+            )}
+          </div>
+        </div>
+
         <div className="flex items-center gap-2">
           <input
             type="checkbox"
