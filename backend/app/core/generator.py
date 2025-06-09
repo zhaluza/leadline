@@ -438,8 +438,36 @@ class AMTBackingGenerator:
                     )
                 except Exception as alt_error:
                     print(f"[DEBUG] Alternative generation also failed: {alt_error}")
-                    print("[DEBUG] Skipping this variation due to AMT compatibility issues")
-                    return None
+                    print("[DEBUG] Attempting generation without controls to test basic functionality...")
+                    
+                    # Try without controls to see if the model can generate at all
+                    try:
+                        generated_events = generate(
+                            self.model,
+                            start_time=0,
+                            end_time=num_bars * seconds_per_bar,
+                            top_p=0.9
+                        )
+                        print("[DEBUG] Successfully generated without controls - this suggests the model works")
+                    except Exception as no_controls_error:
+                        print(f"[DEBUG] Generation without controls also failed: {no_controls_error}")
+                        print("[DEBUG] Attempting generation with extended duration...")
+                        
+                        # Try with a longer duration to see if the model can generate more
+                        try:
+                            extended_duration = num_bars * seconds_per_bar * 1.5  # 50% longer
+                            print(f"[DEBUG] Trying extended duration: {extended_duration:.2f} seconds")
+                            generated_events = generate(
+                                self.model,
+                                start_time=0,
+                                end_time=extended_duration,
+                                top_p=0.9
+                            )
+                            print(f"[DEBUG] Extended generation produced {len(generated_events)} events")
+                        except Exception as extended_error:
+                            print(f"[DEBUG] Extended generation also failed: {extended_error}")
+                            print("[DEBUG] Skipping this variation due to AMT compatibility issues")
+                            return None
             
             print(f"[DEBUG] Generated {len(generated_events)} events for variation")
             if len(generated_events) > 0:
@@ -447,6 +475,10 @@ class AMTBackingGenerator:
                 print(f"[DEBUG] Last generated event: {generated_events[-1]}")
                 print(f"[DEBUG] Event types: {[type(event) for event in generated_events[:5]]}")
                 print(f"[DEBUG] First 5 events: {generated_events[:5]}")
+                
+                # Debug: Check if events span the full duration
+                print(f"[DEBUG] Expected duration: {num_bars * seconds_per_bar} seconds")
+                print(f"[DEBUG] Number of events: {len(generated_events)}")
                 
                 # AMT events should be non-negative integers
                 if len(generated_events) > 0:
@@ -498,6 +530,28 @@ class AMTBackingGenerator:
             print(f"[DEBUG] Loading variation into pretty_midi")
             pretty_generated = pretty_midi.PrettyMIDI(str(temp_file))
             print(f"[DEBUG] Successfully loaded variation into pretty_midi")
+            
+            # FIXME: Tempo alignment issue - the generated melody may not align properly with backing tracks at different tempos
+            # This is likely due to the AMT model's internal timing representation not being tempo-aware
+            # Consider implementing tempo-aware event generation or post-processing tempo adjustment
+            
+            # Debug: Check the actual duration of the generated MIDI
+            if len(pretty_generated.instruments) > 0:
+                all_notes = []
+                for instrument in pretty_generated.instruments:
+                    if not instrument.is_drum:
+                        all_notes.extend(instrument.notes)
+                
+                if len(all_notes) > 0:
+                    max_end_time = max(note.end for note in all_notes)
+                    print(f"[DEBUG] Generated MIDI actual duration: {max_end_time:.2f} seconds")
+                    print(f"[DEBUG] Expected duration: {num_bars * seconds_per_bar:.2f} seconds")
+                    print(f"[DEBUG] Duration ratio: {max_end_time / (num_bars * seconds_per_bar):.2f}")
+                    
+                    # Count how many bars this actually spans
+                    actual_bars = max_end_time / seconds_per_bar
+                    print(f"[DEBUG] Generated melody spans approximately {actual_bars:.1f} bars")
+                    
         except Exception as e:
             print(f"[DEBUG] Error processing variation MIDI: {e}")
             import traceback
@@ -523,6 +577,22 @@ class AMTBackingGenerator:
                     all_notes.extend(instrument.notes)
             all_notes.sort(key=lambda x: x.start)
             print(f"[DEBUG] Found {len(all_notes)} notes in variation")
+
+            # Debug: Show timing distribution of all notes
+            if len(all_notes) > 0:
+                print(f"[DEBUG] Note timing analysis:")
+                print(f"[DEBUG] First note: pitch={all_notes[0].pitch}, start={all_notes[0].start}, end={all_notes[0].end}")
+                print(f"[DEBUG] Last note: pitch={all_notes[-1].pitch}, start={all_notes[-1].start}, end={all_notes[-1].end}")
+                
+                # Count notes in each bar
+                for bar in range(num_bars):
+                    bar_start = bar * seconds_per_bar
+                    bar_end = (bar + 1) * seconds_per_bar
+                    bar_notes = [n for n in all_notes if bar_start <= n.start < bar_end]
+                    print(f"[DEBUG] Bar {bar + 1} ({bar_start:.1f}-{bar_end:.1f}s): {len(bar_notes)} notes")
+                    if len(bar_notes) > 0:
+                        print(f"[DEBUG]   First note in bar: pitch={bar_notes[0].pitch}, start={bar_notes[0].start}")
+                        print(f"[DEBUG]   Last note in bar: pitch={bar_notes[-1].pitch}, start={bar_notes[-1].start}")
 
             # Filter for monophonic melody with more variety
             for note in all_notes:
@@ -1073,6 +1143,22 @@ class AMTBackingGenerator:
                             all_notes.extend(instrument.notes)
                     all_notes.sort(key=lambda x: x.start)
                     print(f"[DEBUG] Found {len(all_notes)} notes in variation {i+1}")
+
+                    # Debug: Show timing distribution of all notes
+                    if len(all_notes) > 0:
+                        print(f"[DEBUG] Note timing analysis:")
+                        print(f"[DEBUG] First note: pitch={all_notes[0].pitch}, start={all_notes[0].start}, end={all_notes[0].end}")
+                        print(f"[DEBUG] Last note: pitch={all_notes[-1].pitch}, start={all_notes[-1].start}, end={all_notes[-1].end}")
+                        
+                        # Count notes in each bar
+                        for bar in range(num_bars):
+                            bar_start = bar * seconds_per_bar
+                            bar_end = (bar + 1) * seconds_per_bar
+                            bar_notes = [n for n in all_notes if bar_start <= n.start < bar_end]
+                            print(f"[DEBUG] Bar {bar + 1} ({bar_start:.1f}-{bar_end:.1f}s): {len(bar_notes)} notes")
+                            if len(bar_notes) > 0:
+                                print(f"[DEBUG]   First note in bar: pitch={bar_notes[0].pitch}, start={bar_notes[0].start}")
+                                print(f"[DEBUG]   Last note in bar: pitch={bar_notes[-1].pitch}, start={bar_notes[-1].start}")
 
                     # Filter for monophonic melody with more variety
                     for note in all_notes:
