@@ -210,14 +210,14 @@ export default function LeadMelody({
             className="rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500"
           />
           <label htmlFor="useCustomSeed" className="text-gray-300 text-sm">
-            Use custom seed melody (add notes for first 4 measures)
+            Use custom seed melody (add notes for first measure)
           </label>
         </div>
 
         {useCustomSeed && (
           <div className="space-y-3 p-3 bg-gray-700/50 rounded border border-gray-600">
             <h3 className="text-sm font-medium text-gray-300">
-              Seed Melody Notes (First 4 Measures)
+              Seed Melody Notes (First Measure)
             </h3>
 
             <div className="grid grid-cols-4 gap-2 text-xs">
@@ -243,7 +243,7 @@ export default function LeadMelody({
                 <input
                   type="number"
                   min="0"
-                  max="16"
+                  max="4"
                   step="0.25"
                   value={newNoteStart}
                   onChange={(e) => setNewNoteStart(Number(e.target.value))}
@@ -258,7 +258,7 @@ export default function LeadMelody({
                 <input
                   type="number"
                   min="0.25"
-                  max="16"
+                  max="4"
                   step="0.25"
                   value={newNoteDuration}
                   onChange={(e) => setNewNoteDuration(Number(e.target.value))}
@@ -317,7 +317,7 @@ export default function LeadMelody({
             ? "Generate Backing Track First"
             : isGenerating
             ? "Generating..."
-            : "Generate Lead Melody (4-measure seed + AI completion)"}
+            : "Generate Lead Melody (1-bar seed + AI completion)"}
         </button>
 
         {showNoBackingTrackMsg && (
