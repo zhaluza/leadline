@@ -67,6 +67,17 @@ class ChordBackingRequest(BaseModel):
     key: str = "C"  # e.g., "C", "G", "F#", etc.
     chord_progression: list[str]  # e.g., ["C", "Am", "F", "G"]
 
+class SeedNote(BaseModel):
+    pitch: int  # MIDI note number (0-127)
+    start: float  # Start time in beats (0.0, 1.0, 2.0, etc.)
+    duration: float  # Duration in beats (0.25, 0.5, 1.0, etc.)
+
+class LeadMelodyRequest(BaseModel):
+    num_bars: int = 8
+    tempo: int = 120
+    key: str = "C"
+    seed_notes: Optional[list[SeedNote]] = None  # User-provided seed notes for first measure
+
 # Store for active generation tasks
 active_tasks = {}
 
@@ -240,6 +251,118 @@ async def generate_seed(request: GenerationRequest):
 async def generate_lead(generation_id: str, request: GenerationRequest):
     """Generate a lead melody for an existing backing track and return combined track as well."""
     try:
+        print(f"[DEBUG] Starting lead melody generation for {generation_id}")
+        print(f"[DEBUG] Request params: num_bars={request.num_bars}, tempo={request.tempo}, key={request.key}")
+        
+        # Verify backing track exists
+        backing_dir = Path("static") / generation_id
+        backing_midi = backing_dir / "backing.mid"
+        print(f"[DEBUG] Looking for backing track at {backing_midi}")
+        if not backing_midi.exists():
+            print(f"[DEBUG] Backing track not found at {backing_midi}")
+            raise HTTPException(status_code=404, detail="Backing track not found")
+        print(f"[DEBUG] Found backing track at {backing_midi}")
+
+        # Load the backing track
+        print("[DEBUG] Loading backing track MIDI file")
+        try:
+            backing_track = pretty_midi.PrettyMIDI(str(backing_midi))
+            print(f"[DEBUG] Loaded backing track with {len(backing_track.instruments)} instruments")
+            for i, inst in enumerate(backing_track.instruments):
+                print(f"[DEBUG] Instrument {i}: program={inst.program}, is_drum={inst.is_drum}, notes={len(inst.notes)}")
+        except Exception as e:
+            print(f"[DEBUG] Error loading backing track: {e}")
+            import traceback
+            print(f"[DEBUG] Backing track load traceback: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"Failed to load backing track: {str(e)}")
+        
+        # Generate lead melody
+        print("[DEBUG] Calling generator.generate_lead_melody")
+        try:
+            lead_melody = generator.generate_lead_melody(
+                backing_track,
+                num_bars=request.num_bars,
+                tempo=request.tempo
+            )
+            print("[DEBUG] Lead melody generation completed")
+        except Exception as e:
+            print(f"[DEBUG] Error in lead melody generation: {e}")
+            import traceback
+            print(f"[DEBUG] Lead melody generation traceback: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"Failed to generate lead melody: {str(e)}")
+        
+        if lead_melody is None:
+            print("[DEBUG] Lead melody generation returned None")
+            raise HTTPException(status_code=500, detail="Failed to generate lead melody")
+
+        # Save lead MIDI file
+        print("[DEBUG] Saving lead MIDI file")
+        try:
+            midi_path = backing_dir / "lead.mid"
+            lead_melody.write(str(midi_path))
+            print(f"[DEBUG] Saved lead MIDI file to {midi_path}")
+        except Exception as e:
+            print(f"[DEBUG] Error saving lead MIDI: {e}")
+            import traceback
+            print(f"[DEBUG] Lead MIDI save traceback: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"Failed to save lead MIDI: {str(e)}")
+
+        # Save lead audio file
+        audio_path = backing_dir / "lead.wav"
+        print(f"Generating lead audio file at {audio_path}")
+        audio_data = generator.midi_to_audio(lead_melody)
+        if audio_data is None or len(audio_data) == 0:
+            raise ValueError("Generated audio data is empty")
+        if np.max(np.abs(audio_data)) > 1.0:
+            audio_data = np.clip(audio_data, -1.0, 1.0)
+        audio_data = (audio_data * 32767).astype(np.int16)
+        wavfile.write(str(audio_path), 44100, audio_data)
+
+        # Create combined track
+        combined_midi = pretty_midi.PrettyMIDI(initial_tempo=request.tempo)
+        
+        # Add backing track instruments
+        for instrument in backing_track.instruments:
+            combined_midi.instruments.append(instrument)
+        
+        # Add lead melody
+        for instrument in lead_melody.instruments:
+            combined_midi.instruments.append(instrument)
+
+        # Save combined MIDI file
+        combined_midi_path = backing_dir / "combined.mid"
+        combined_midi.write(str(combined_midi_path))
+        print(f"Saved combined MIDI file to {combined_midi_path}")
+
+        # Save combined audio file
+        combined_audio_path = backing_dir / "combined.wav"
+        print(f"Generating combined audio file at {combined_audio_path}")
+        combined_audio_data = generator.midi_to_audio(combined_midi)
+        if combined_audio_data is None or len(combined_audio_data) == 0:
+            raise ValueError("Generated combined audio data is empty")
+        if np.max(np.abs(combined_audio_data)) > 1.0:
+            combined_audio_data = np.clip(combined_audio_data, -1.0, 1.0)
+        combined_audio_data = (combined_audio_data * 32767).astype(np.int16)
+        wavfile.write(str(combined_audio_path), 44100, combined_audio_data)
+
+        return {
+            "generation_id": generation_id,
+            "midi_url": f"/static/{generation_id}/lead.mid",
+            "audio_url": f"/static/{generation_id}/lead.wav",
+            "combined_midi_url": f"/static/{generation_id}/combined.mid",
+            "combined_audio_url": f"/static/{generation_id}/combined.wav",
+            "status": "completed"
+        }
+
+    except Exception as e:
+        print(f"Error generating lead melody: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/lead/{generation_id}/custom")
+@retry_on_error(max_retries=3, delay=2)
+async def generate_lead_with_seed(generation_id: str, request: LeadMelodyRequest):
+    """Generate a lead melody with custom seed notes for an existing backing track."""
+    try:
         # Verify backing track exists
         backing_dir = Path("static") / generation_id
         backing_midi = backing_dir / "backing.mid"
@@ -249,9 +372,30 @@ async def generate_lead(generation_id: str, request: GenerationRequest):
         # Load the backing track
         backing_track = pretty_midi.PrettyMIDI(str(backing_midi))
         
-        # Generate lead melody
-        lead_melody = generator.generate_lead_melody(
+        # Create seed melody from user notes if provided
+        seed_melody = None
+        if request.seed_notes:
+            # Convert SeedNote objects to dictionaries
+            seed_notes_data = [
+                {
+                    'pitch': note.pitch,
+                    'start': note.start,
+                    'duration': note.duration
+                }
+                for note in request.seed_notes
+            ]
+            seed_melody = generator.create_seed_melody_from_notes(
+                seed_notes_data,
+                key=request.key,
+                num_bars=request.num_bars,
+                tempo=request.tempo
+            )
+            print(f"Created custom seed melody with {len(request.seed_notes)} notes")
+        
+        # Generate lead melody with custom seed
+        lead_melody = generator.generate_lead_melody_with_seed(
             backing_track,
+            seed_melody=seed_melody,
             num_bars=request.num_bars,
             tempo=request.tempo
         )
@@ -273,41 +417,87 @@ async def generate_lead(generation_id: str, request: GenerationRequest):
         if np.max(np.abs(audio_data)) > 1.0:
             audio_data = np.clip(audio_data, -1.0, 1.0)
         audio_data = (audio_data * 32767).astype(np.int16)
-        sample_rate = 44100
-        wavfile.write(str(audio_path), sample_rate, audio_data)
-        if not audio_path.exists():
-            raise FileNotFoundError(f"Failed to write lead audio file to {audio_path}")
-        print(f"Lead audio file written: {audio_path}, size: {audio_path.stat().st_size} bytes")
+        wavfile.write(str(audio_path), 44100, audio_data)
 
-        # --- Combined Track ---
-        combined = pretty_midi.PrettyMIDI()
+        # Create combined track
+        combined_midi = pretty_midi.PrettyMIDI(initial_tempo=request.tempo)
+        
+        # Add backing track instruments
         for instrument in backing_track.instruments:
-            combined.instruments.append(instrument)
+            combined_midi.instruments.append(instrument)
+        
+        # Add lead melody
         for instrument in lead_melody.instruments:
-            combined.instruments.append(instrument)
+            combined_midi.instruments.append(instrument)
+
+        # Save combined MIDI file
         combined_midi_path = backing_dir / "combined.mid"
-        combined.write(str(combined_midi_path))
+        combined_midi.write(str(combined_midi_path))
         print(f"Saved combined MIDI file to {combined_midi_path}")
+
+        # Save combined audio file
         combined_audio_path = backing_dir / "combined.wav"
-        combined_audio = generator.midi_to_audio(combined)
-        if combined_audio is None or len(combined_audio) == 0:
+        print(f"Generating combined audio file at {combined_audio_path}")
+        combined_audio_data = generator.midi_to_audio(combined_midi)
+        if combined_audio_data is None or len(combined_audio_data) == 0:
             raise ValueError("Generated combined audio data is empty")
-        if np.max(np.abs(combined_audio)) > 1.0:
-            combined_audio = np.clip(combined_audio, -1.0, 1.0)
-        combined_audio = (combined_audio * 32767).astype(np.int16)
-        wavfile.write(str(combined_audio_path), sample_rate, combined_audio)
-        if not combined_audio_path.exists():
-            raise FileNotFoundError(f"Failed to write combined audio file to {combined_audio_path}")
-        print(f"Combined audio file written: {combined_audio_path}, size: {combined_audio_path.stat().st_size} bytes")
+        if np.max(np.abs(combined_audio_data)) > 1.0:
+            combined_audio_data = np.clip(combined_audio_data, -1.0, 1.0)
+        combined_audio_data = (combined_audio_data * 32767).astype(np.int16)
+        wavfile.write(str(combined_audio_path), 44100, combined_audio_data)
 
         return {
+            "generation_id": generation_id,
+            "midi_url": f"/static/{generation_id}/lead.mid",
             "audio_url": f"/static/{generation_id}/lead.wav",
+            "combined_midi_url": f"/static/{generation_id}/combined.mid",
             "combined_audio_url": f"/static/{generation_id}/combined.wav",
-            "status": "completed"
+            "status": "completed",
+            "seed_notes_used": len(request.seed_notes) if request.seed_notes else 0
         }
 
     except Exception as e:
-        print(f"Error generating lead melody: {e}")
+        print(f"Error generating lead melody with seed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/lead/{generation_id}/preview-seed")
+async def preview_seed_melody(generation_id: str, request: GenerationRequest):
+    """Generate and preview the seed melody that will be used for lead generation."""
+    try:
+        # Generate seed melody
+        seed_melody = generator.create_seed_melody(
+            key=request.key,
+            num_bars=request.num_bars,
+            tempo=request.tempo
+        )
+        
+        # Save seed melody files
+        output_dir = Path("static") / generation_id
+        output_dir.mkdir(exist_ok=True)
+        
+        # Save MIDI file
+        midi_path = output_dir / "preview_seed.mid"
+        seed_melody.write(str(midi_path))
+        
+        # Save audio file
+        audio_path = output_dir / "preview_seed.wav"
+        audio_data = generator.midi_to_audio(seed_melody)
+        if audio_data is None or len(audio_data) == 0:
+            raise ValueError("Generated audio data is empty")
+        if np.max(np.abs(audio_data)) > 1.0:
+            audio_data = np.clip(audio_data, -1.0, 1.0)
+        audio_data = (audio_data * 32767).astype(np.int16)
+        wavfile.write(str(audio_path), 44100, audio_data)
+        
+        return {
+            "generation_id": generation_id,
+            "midi_url": f"/static/{generation_id}/preview_seed.mid",
+            "audio_url": f"/static/{generation_id}/preview_seed.wav",
+            "status": "completed"
+        }
+        
+    except Exception as e:
+        print(f"Error generating seed preview: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/files/{generation_id}/{filename}")
