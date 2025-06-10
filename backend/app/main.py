@@ -9,9 +9,9 @@ static_dir = Path("static")
 static_dir.mkdir(exist_ok=True)
 
 app = FastAPI(
-    title="AMT Backing Generator API",
-    description="API for generating AI-powered backing tracks and lead melodies",
-    version="0.1.0"
+    title="LeadLine API",
+    description="AI-powered backing tracks and lead melody generator",
+    version="1.0.0"
 )
 
 # Configure CORS
@@ -32,7 +32,7 @@ app.include_router(generator.router, prefix="/api", tags=["generator"])
 
 @app.get("/")
 async def root():
-    return {"message": "AMT Backing Generator API"}
+    return {"message": "Welcome to LeadLine - AI Backing Tracks & Melodies"}
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True) 

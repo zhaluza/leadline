@@ -40,10 +40,10 @@ function App() {
       <div className="max-w-7xl mx-auto">
         <header className="mb-8">
           <h1 className="text-3xl md:text-4xl font-bold text-center text-blue-400">
-            Melody Machine
+            LeadLine
           </h1>
           <p className="text-center text-gray-300 mt-2 mb-4">
-            AI-powered songwriting tool for guitarists
+            AI-powered backing tracks & melodies
           </p>
           <div className="text-center text-gray-400 text-sm max-w-2xl mx-auto">
             <p>
