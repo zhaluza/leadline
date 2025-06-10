@@ -12,7 +12,7 @@ from functools import wraps
 import numpy as np
 from scipy.io import wavfile
 
-from app.core.generator import AMTBackingGenerator
+from app.core.generator_clean import AMTBackingGenerator
 
 router = APIRouter()
 
@@ -47,6 +47,7 @@ try:
     if not SOUNDFONT_PATH.exists():
         raise FileNotFoundError(f"Soundfont not found at {SOUNDFONT_PATH}")
     generator = AMTBackingGenerator(soundfont_path=str(SOUNDFONT_PATH))
+    print("✅ Successfully initialized clean generator")
 except Exception as e:
     print(f"Error initializing generator: {e}")
     raise HTTPException(
