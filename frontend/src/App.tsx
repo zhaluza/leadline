@@ -2,13 +2,17 @@ import { useState } from "react";
 import BackingTrack from "./components/BackingTrack";
 import LeadMelody from "./components/LeadMelody";
 import AudioPlayer from "./components/AudioPlayer";
+import MidiVisualizer from "./components/MidiVisualizer";
+import SheetMusicVisualizer from "./components/SheetMusicVisualizer";
 
 function App() {
   const [backingTrackUrl, setBackingTrackUrl] = useState<string | null>(null);
   const [leadMelodyUrl, setLeadMelodyUrl] = useState<string | null>(null);
   const [combinedTrackUrl, setCombinedTrackUrl] = useState<string | null>(null);
+  const [combinedMidiUrl, setCombinedMidiUrl] = useState<string | null>(null);
   const [generationId, setGenerationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showSheetMusic, setShowSheetMusic] = useState(false);
 
   const handleBackingTrackComplete = (
     generationId: string,
@@ -18,15 +22,18 @@ function App() {
     setGenerationId(generationId);
     setLeadMelodyUrl(null);
     setCombinedTrackUrl(null);
+    setCombinedMidiUrl(null);
     setError(null);
   };
 
   const handleLeadMelodyComplete = (
     audioUrl: string,
-    combinedAudioUrl?: string
+    combinedAudioUrl?: string,
+    combinedMidiUrl?: string
   ) => {
     setLeadMelodyUrl(audioUrl);
     if (combinedAudioUrl) setCombinedTrackUrl(combinedAudioUrl);
+    if (combinedMidiUrl) setCombinedMidiUrl(combinedMidiUrl);
     setError(null);
   };
 
@@ -114,6 +121,84 @@ function App() {
               💡 Tip: Use the backing track for practice, or combine it with the
               melody for a complete song!
             </p>
+          </div>
+        )}
+
+        {/* MIDI Visualization Toggle */}
+        {(backingTrackUrl || combinedTrackUrl) && (
+          <div className="mt-8 bg-gray-800/50 p-6 rounded-lg border border-gray-700">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-blue-300">
+                MIDI Visualization
+              </h2>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400 text-sm">View:</span>
+                <button
+                  onClick={() => setShowSheetMusic(false)}
+                  className={`px-3 py-1 rounded text-sm font-medium transition-colors
+                    ${
+                      !showSheetMusic
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-600 text-gray-300 hover:bg-gray-500"
+                    }`}
+                >
+                  Piano Roll
+                </button>
+                <button
+                  onClick={() => setShowSheetMusic(true)}
+                  className={`px-3 py-1 rounded text-sm font-medium transition-colors
+                    ${
+                      showSheetMusic
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-600 text-gray-300 hover:bg-gray-500"
+                    }`}
+                >
+                  Sheet Music
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {backingTrackUrl && (
+                <div>
+                  {showSheetMusic ? (
+                    <SheetMusicVisualizer
+                      midiUrl={`http://localhost:8000/static/${generationId}/backing.mid`}
+                      label="Backing Track Sheet Music"
+                      height={250}
+                      width={400}
+                    />
+                  ) : (
+                    <MidiVisualizer
+                      midiUrl={`http://localhost:8000/static/${generationId}/backing.mid`}
+                      label="Backing Track Piano Roll"
+                      height={200}
+                      width={400}
+                    />
+                  )}
+                </div>
+              )}
+
+              {combinedMidiUrl && (
+                <div>
+                  {showSheetMusic ? (
+                    <SheetMusicVisualizer
+                      midiUrl={combinedMidiUrl}
+                      label="Complete Song Sheet Music"
+                      height={250}
+                      width={400}
+                    />
+                  ) : (
+                    <MidiVisualizer
+                      midiUrl={combinedMidiUrl}
+                      label="Complete Song Piano Roll"
+                      height={200}
+                      width={400}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

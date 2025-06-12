@@ -2,7 +2,11 @@ import { useState } from "react";
 
 interface LeadMelodyProps {
   generationId: string | null;
-  onGenerationComplete: (audioUrl: string, combinedAudioUrl?: string) => void;
+  onGenerationComplete: (
+    audioUrl: string,
+    combinedAudioUrl?: string,
+    combinedMidiUrl?: string
+  ) => void;
   onError: (error: string) => void;
 }
 
@@ -147,6 +151,9 @@ export default function LeadMelody({
         `http://localhost:8000${data.audio_url}`,
         data.combined_audio_url
           ? `http://localhost:8000${data.combined_audio_url}`
+          : undefined,
+        data.combined_midi_url
+          ? `http://localhost:8000${data.combined_midi_url}`
           : undefined
       );
     } catch (error) {

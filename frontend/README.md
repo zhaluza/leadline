@@ -1,47 +1,98 @@
 # LeadLine Frontend
 
-The frontend application for LeadLine - an AI-powered guitar backing track and lead melody generator.
+A React-based frontend for the LeadLine AI-powered backing tracks and lead melody generator.
 
 ## Features
 
-- **Backing Track Generation**: Create custom backing tracks with chord progressions
-- **Lead Melody Generation**: Generate AI-powered lead melodies over backing tracks
-- **Seed Melody Customization**: Customize the seed melody for more personalized results
-- **Real-time Audio Preview**: Preview generated tracks and melodies before downloading
+- **Backing Track Generation**: Create custom backing tracks with drums, bass, and piano
+- **AI Lead Melody Generation**: Generate AI-powered lead melodies that fit your chord progressions
+- **MIDI Visualization**:
+  - **Piano Roll View**: Interactive piano roll visualization with play/pause functionality
+  - **Sheet Music View**: Traditional music notation display using VexFlow
+  - Real-time playback with visual feedback
+  - Progress indicators and note highlighting
+- **Audio Playback**: Listen to generated tracks with built-in audio players
+- **Custom Seed Melodies**: Create custom seed notes for more personalized melodies
 
-## Tech Stack
+## Technologies Used
 
 - **React 19** with TypeScript
 - **Vite** for fast development and building
 - **Tailwind CSS** for styling
-- **ESLint** for code quality
+- **Tone.js** for audio processing and MIDI playback
+- **@tonejs/midi** for MIDI file parsing
+- **VexFlow** for sheet music rendering
+- **Canvas API** for custom piano roll visualization
 
 ## Development
 
+### Prerequisites
+
+- Node.js 18+
+- npm or yarn
+
+### Installation
+
 ```bash
-# Install dependencies
 npm install
-
-# Start development server
-npm run dev
-
-# Build for production
-npm run build
-
-# Preview production build
-npm run preview
-
-# Run linting
-npm run lint
 ```
+
+### Running the Development Server
+
+```bash
+npm run dev
+```
+
+The app will be available at `http://localhost:5173`
+
+### Building for Production
+
+```bash
+npm run build
+```
+
+## MIDI Visualization Features
+
+### Piano Roll View
+
+- Interactive canvas-based visualization
+- Color-coded notes based on velocity
+- Real-time playback with visual playhead
+- Note highlighting during playback
+- Time and pitch axis labels
+- Progress bar with current time display
+
+### Sheet Music View
+
+- Traditional music notation using VexFlow
+- Automatic conversion from MIDI to sheet music
+- Treble clef with 4/4 time signature
+- Limited to first 16 notes for demo purposes
+
+### Controls
+
+- Play/Pause button for MIDI playback
+- Toggle between piano roll and sheet music views
+- Responsive design for different screen sizes
+
+## Demo Features
+
+For the demo, the app includes:
+
+- Default settings to avoid known bugs (tempo, key, chord modifications)
+- Impressive MIDI visualizations for both backing tracks and combined songs
+- Interactive playback controls
+- Professional-looking UI with dark theme
+- Real-time visual feedback during playback
 
 ## API Integration
 
-This frontend connects to the LeadLine backend API running on `http://localhost:8000` for:
+The frontend communicates with the LeadLine backend API running on `http://localhost:8000`:
 
-- Backing track generation with custom chord progressions
-- Lead melody generation using Anticipatory Music Transformers (AMT)
-- Audio file serving and streaming
+- Backing track generation
+- Lead melody generation with custom seeds
+- MIDI and audio file serving
+- Combined track creation
 
 ## Project Structure
 
