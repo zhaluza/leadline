@@ -60,13 +60,25 @@ class AudioConverter:
     
     def midi_to_audio(self, midi_file, sample_rate=44100):
         """Convert MIDI to audio using fluidsynth and the specified soundfont."""
+        # Extract tempo from MIDI file
+        target_tempo = 120  # Default tempo
+        try:
+            tempo_times, tempo_values = midi_file.get_tempo_changes()
+            if len(tempo_values) > 0:
+                target_tempo = float(tempo_values[0])
+                print(f"[DEBUG] Extracted tempo from MIDI: {target_tempo} BPM")
+        except Exception as e:
+            print(f"[DEBUG] Could not extract tempo from MIDI: {e}")
+        
         if self.soundfont_path is None:
             print("No soundfont specified, falling back to pretty_midi synthesizer...")
-            return midi_file.synthesize(fs=sample_rate)
+            audio_data = midi_file.synthesize(fs=sample_rate)
+            return self._adjust_audio_tempo(audio_data, target_tempo, sample_rate)
         
         if not os.path.exists(self.soundfont_path):
             print(f"Soundfont not found at {self.soundfont_path}, falling back to pretty_midi synthesizer...")
-            return midi_file.synthesize(fs=sample_rate)
+            audio_data = midi_file.synthesize(fs=sample_rate)
+            return self._adjust_audio_tempo(audio_data, target_tempo, sample_rate)
         
         # Create a temporary file for the audio output
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
@@ -118,18 +130,21 @@ class AudioConverter:
             audio_data = audio_data.astype(np.float32) / 32768.0
             print(f"Normalized audio data: min={np.min(audio_data)}, max={np.max(audio_data)}")
             
-            return audio_data
+            # Adjust tempo by resampling
+            return self._adjust_audio_tempo(audio_data, target_tempo, sample_rate)
             
         except subprocess.CalledProcessError as e:
             print(f"Error running fluidsynth: {e}")
             print(f"Command output: {e.stdout}")
             print(f"Error output: {e.stderr}")
             print("Falling back to pretty_midi synthesizer...")
-            return midi_file.synthesize(fs=sample_rate)
+            audio_data = midi_file.synthesize(fs=sample_rate)
+            return self._adjust_audio_tempo(audio_data, target_tempo, sample_rate)
         except Exception as e:
             print(f"Unexpected error: {e}")
             print("Falling back to pretty_midi synthesizer...")
-            return midi_file.synthesize(fs=sample_rate)
+            audio_data = midi_file.synthesize(fs=sample_rate)
+            return self._adjust_audio_tempo(audio_data, target_tempo, sample_rate)
         finally:
             # Clean up temporary files
             try:
@@ -137,4 +152,31 @@ class AudioConverter:
                 os.unlink(temp_midi_path)
                 print("Cleaned up temporary files")
             except Exception as e:
-                print(f"Error cleaning up temporary files: {e}") 
+                print(f"Error cleaning up temporary files: {e}")
+    
+    def _adjust_audio_tempo(self, audio_data, target_tempo, sample_rate):
+        """Adjust audio tempo by resampling."""
+        # The issue is that both pretty_midi and fluidsynth seem to ignore tempo
+        # and play at a fixed speed. We need to adjust the playback speed.
+        # The synthesizer plays at half speed, so the reference tempo is 60 BPM
+        reference_tempo = 60.0  # The synthesizer plays at half speed
+        
+        if abs(target_tempo - reference_tempo) < 1.0:
+            print(f"[DEBUG] Tempo close to reference ({reference_tempo} BPM), no adjustment needed")
+            return audio_data
+        
+        # Calculate speed ratio
+        speed_ratio = target_tempo / reference_tempo
+        print(f"[DEBUG] Adjusting tempo: {reference_tempo} -> {target_tempo} BPM (ratio: {speed_ratio:.3f})")
+        
+        # Resample the audio to adjust tempo
+        from scipy import signal
+        
+        # Calculate new length
+        new_length = int(len(audio_data) / speed_ratio)
+        
+        # Resample using scipy
+        resampled_audio = signal.resample(audio_data, new_length)
+        
+        print(f"[DEBUG] Resampled audio: {len(audio_data)} -> {len(resampled_audio)} samples")
+        return resampled_audio 

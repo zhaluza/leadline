@@ -25,6 +25,7 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [samplers, setSamplers] = useState<{ [key: number]: any }>({});
   const [samplersLoaded, setSamplersLoaded] = useState(false);
+  const [midiTempo, setMidiTempo] = useState(120); // Add tempo state
 
   // Use refs to track state that needs to be accessed in the update loop
   const isPlayingRef = useRef(false);
@@ -132,7 +133,23 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
           console.log(`Track ${i}:`, track.name, "notes:", track.notes.length);
         });
 
+        // Extract tempo from MIDI data
+        let tempo = 120; // Default tempo
+        if (
+          midi.header &&
+          midi.header.tempos &&
+          midi.header.tempos.length > 0
+        ) {
+          // Convert microseconds per quarter note to BPM
+          const microsecondsPerBeat = midi.header.tempos[0].bpm;
+          tempo = Math.round(microsecondsPerBeat);
+          console.log("Extracted MIDI tempo:", tempo, "BPM");
+        } else {
+          console.log("No tempo found in MIDI, using default 120 BPM");
+        }
+
         setMidiData(midi);
+        setMidiTempo(tempo);
         setDuration(midi.duration);
         setIsLoading(false);
       } catch (err) {
@@ -338,7 +355,13 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
 
         // Debug: log every second
         if (Math.floor(elapsed) !== Math.floor(currentTimeRef.current - 0.1)) {
-          console.log("Playback progress:", elapsed.toFixed(1), "s");
+          console.log(
+            "Playback progress:",
+            elapsed.toFixed(1),
+            "s at",
+            midiTempo,
+            "BPM"
+          );
         }
 
         // Check for notes to play
@@ -723,6 +746,8 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
           <span>Tracks: {midiData.tracks.length}</span>
           <span className="mx-2">•</span>
           <span>Duration: {midiData.duration.toFixed(1)}s</span>
+          <span className="mx-2">•</span>
+          <span>Tempo: {midiTempo} BPM</span>
           <span className="mx-2">•</span>
           <span>
             Notes:{" "}

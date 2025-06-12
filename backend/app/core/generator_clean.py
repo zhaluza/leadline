@@ -375,14 +375,28 @@ class AMTBackingGenerator:
     def generate_lead_melody(self, backing_midi, num_bars=8, tempo=120):
         """Generate a lead melody using AMT over the backing track and a seed melody."""
         print("[DEBUG] Starting lead melody generation")
+        
+        # Extract tempo from backing track if available
+        backing_tempo = tempo  # Default to passed tempo
+        try:
+            tempo_times, tempo_values = backing_midi.get_tempo_changes()
+            if len(tempo_values) > 0:
+                backing_tempo = int(tempo_values[0])
+                print(f"[DEBUG] Extracted tempo from backing track: {backing_tempo} BPM")
+            else:
+                print(f"[DEBUG] Using passed tempo: {tempo} BPM")
+        except Exception as e:
+            print(f"[DEBUG] Could not extract tempo from backing track: {e}")
+            print(f"[DEBUG] Using passed tempo: {tempo} BPM")
+        
         beats_per_bar = 4
-        seconds_per_bar = 60.0 / tempo * beats_per_bar
-        print(f"[DEBUG] Lead melody params: num_bars={num_bars}, tempo={tempo}, seconds_per_bar={seconds_per_bar}")
+        seconds_per_bar = 60.0 / backing_tempo * beats_per_bar
+        print(f"[DEBUG] Lead melody params: num_bars={num_bars}, tempo={backing_tempo}, seconds_per_bar={seconds_per_bar}")
         
         # Try AMT generation first, but fall back to algorithmic generation if it fails
         try:
             print("[DEBUG] Attempting AMT-based generation...")
-            amt_melody = self._generate_with_amt(backing_midi, num_bars, tempo)
+            amt_melody = self._generate_with_amt(backing_midi, num_bars, backing_tempo)
             if amt_melody and len(amt_melody.instruments[0].notes) > 0:
                 print("[DEBUG] AMT generation successful")
                 return amt_melody
@@ -393,18 +407,32 @@ class AMTBackingGenerator:
             print("[DEBUG] Using algorithmic fallback")
         
         # Fall back to algorithmic melody generation
-        return self._generate_algorithmic_melody(backing_midi, num_bars, tempo)
+        return self._generate_algorithmic_melody(backing_midi, num_bars, backing_tempo)
 
     def generate_lead_melody_with_seed(self, backing_midi, seed_melody=None, num_bars=8, tempo=120):
         """Generate a lead melody using AMT over the backing track with an optional custom seed melody."""
         print("Converting backing track to events...")
+        
+        # Extract tempo from backing track if available
+        backing_tempo = tempo  # Default to passed tempo
+        try:
+            tempo_times, tempo_values = backing_midi.get_tempo_changes()
+            if len(tempo_values) > 0:
+                backing_tempo = int(tempo_values[0])
+                print(f"[DEBUG] Extracted tempo from backing track: {backing_tempo} BPM")
+            else:
+                print(f"[DEBUG] Using passed tempo: {tempo} BPM")
+        except Exception as e:
+            print(f"[DEBUG] Could not extract tempo from backing track: {e}")
+            print(f"[DEBUG] Using passed tempo: {tempo} BPM")
+        
         beats_per_bar = 4
-        seconds_per_bar = 60.0 / tempo * beats_per_bar
+        seconds_per_bar = 60.0 / backing_tempo * beats_per_bar
         
         # Try AMT generation first, but fall back to algorithmic generation if it fails
         try:
             print("[DEBUG] Attempting AMT-based generation with custom seed...")
-            amt_melody = self._generate_with_amt_and_backing(backing_midi, seed_melody, num_bars, tempo)
+            amt_melody = self._generate_with_amt_and_backing(backing_midi, seed_melody, num_bars, backing_tempo)
             if amt_melody and len(amt_melody.instruments[0].notes) > 0:
                 print("[DEBUG] AMT generation successful")
                 return amt_melody
@@ -415,7 +443,7 @@ class AMTBackingGenerator:
             print("[DEBUG] Using algorithmic fallback")
         
         # Fall back to algorithmic melody generation
-        return self._generate_algorithmic_melody(backing_midi, num_bars, tempo)
+        return self._generate_algorithmic_melody(backing_midi, num_bars, backing_tempo)
 
     def _generate_with_amt(self, backing_midi, num_bars=8, tempo=120):
         """Attempt AMT-based generation with robust error handling."""
@@ -434,6 +462,139 @@ class AMTBackingGenerator:
             print(f"[DEBUG] Error saving seed melody: {e}")
             return None
 
+        # Convert seed melody to events with aggressive filtering
+        print("[DEBUG] Converting seed melody to events")
+        temp_seed_file = self.output_dir / 'temp_seed.mid'
+        try:
+            seed_midi.write(str(temp_seed_file))
+            raw_seed_events = midi_to_events(str(temp_seed_file))
+            
+            # Very aggressive filtering - only keep very small values
+            seed_events = []
+            for event in raw_seed_events:
+                if isinstance(event, int) and 0 <= event < 100:  # Very conservative limit
+                    seed_events.append(event)
+            
+            print(f"[DEBUG] Filtered to {len(seed_events)} valid seed events")
+            
+        except Exception as e:
+            print(f"[DEBUG] Error converting seed melody to events: {e}")
+            seed_events = []
+        finally:
+            try:
+                os.remove(temp_seed_file)
+            except:
+                pass
+
+        if not seed_events:
+            print("[DEBUG] No valid seed events, trying without controls")
+            seed_events = []
+
+        try:
+            # Use the actual backing track duration for generation
+            generation_duration = num_bars * seconds_per_bar
+            
+            print(f"[DEBUG] Attempting AMT generation for {generation_duration:.2f} seconds at tempo {tempo}")
+            generated_events = generate(
+                self.model,
+                start_time=0,
+                end_time=generation_duration,
+                controls=seed_events if seed_events else None,
+                top_p=0.7,  # Very conservative
+                delta=50    # Very small delta
+            )
+            
+            print(f"[DEBUG] Generated {len(generated_events)} events")
+            
+            # Very aggressive filtering
+            filtered_events = []
+            for event in generated_events:
+                if isinstance(event, int) and 0 <= event < 100:  # Very conservative limit
+                    filtered_events.append(event)
+            
+            print(f"[DEBUG] Filtered from {len(generated_events)} to {len(filtered_events)} valid events")
+            
+            if len(filtered_events) < 3:  # Need at least 3 events for a meaningful melody
+                print("[DEBUG] Too few valid events, using algorithmic fallback")
+                return None
+            
+            # Try to convert to MIDI
+            try:
+                generated_midi = events_to_midi(filtered_events)
+                print("[DEBUG] Successfully converted to MIDI")
+            except Exception as e:
+                print(f"[DEBUG] MIDI conversion failed: {e}")
+                return None
+            
+            # Convert to pretty_midi and process
+            temp_file = self.output_dir / 'temp_generated.mid'
+            try:
+                generated_midi.save(str(temp_file))
+                pretty_generated = pretty_midi.PrettyMIDI(str(temp_file))
+                
+                # Process the generated melody
+                valid_notes = []
+                current_time = 0
+                
+                all_notes = []
+                for instrument in pretty_generated.instruments:
+                    if not instrument.is_drum:
+                        all_notes.extend(instrument.notes)
+                all_notes.sort(key=lambda x: x.start)
+                
+                # Filter for monophonic melody in guitar range
+                for note in all_notes:
+                    if 60 <= note.pitch <= 84:  # Guitar range
+                        start_time = max(0, note.start)
+                        end_time = min(num_bars * seconds_per_bar, note.end)
+                        
+                        if end_time <= start_time or start_time < current_time:
+                            continue
+                        
+                        duration = min(0.5, max(0.125, end_time - start_time))
+                        velocity = min(120, max(80, note.velocity))
+                        
+                        new_note = pretty_midi.Note(
+                            velocity=velocity,
+                            pitch=note.pitch,
+                            start=start_time,
+                            end=start_time + duration
+                        )
+                        valid_notes.append(new_note)
+                        current_time = new_note.end
+                
+                print(f"[DEBUG] Processed {len(valid_notes)} valid notes from AMT")
+                
+                if len(valid_notes) == 0:
+                    print("[DEBUG] No valid notes processed, using algorithmic fallback")
+                    return None
+                
+                # Create final MIDI with proper tempo
+                final_midi = pretty_midi.PrettyMIDI(initial_tempo=tempo)
+                synth_lead = pretty_midi.Instrument(program=81)  # Lead 2 (sawtooth)
+                
+                for note in valid_notes:
+                    synth_lead.notes.append(note)
+                
+                final_midi.instruments.append(synth_lead)
+                
+                # Clean up temp file
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+                
+                print(f"[DEBUG] AMT generation successful with {len(valid_notes)} notes")
+                return final_midi
+                
+            except Exception as e:
+                print(f"[DEBUG] Error processing generated MIDI: {e}")
+                return None
+                
+        except Exception as e:
+            print(f"[DEBUG] AMT generation failed: {e}")
+            return None
+
     def _generate_with_amt_and_backing(self, backing_midi, seed_melody=None, num_bars=8, tempo=120):
         """Attempt AMT-based generation with backing track and custom seed."""
         beats_per_bar = 4
@@ -450,6 +611,150 @@ class AMTBackingGenerator:
         seed_path = self.output_dir / 'seed_melody.mid'
         seed_melody.write(str(seed_path))
         print(f"Saved seed melody to {seed_path}")
+
+        # Convert seed melody to events with aggressive filtering
+        temp_seed_file = self.output_dir / 'temp_seed.mid'
+        seed_melody.write(str(temp_seed_file))
+        raw_seed_events = midi_to_events(str(temp_seed_file))
+        os.remove(temp_seed_file)
+        
+        # Filter seed events to stay within anticipation library limits
+        seed_events = []
+        for event in raw_seed_events:
+            if isinstance(event, int) and 0 <= event < 100:  # Very conservative limit
+                seed_events.append(event)
+        
+        print(f"[DEBUG] Filtered to {len(seed_events)} valid seed events")
+
+        # Convert backing track to events with filtering
+        temp_backing_file = self.output_dir / 'temp_backing.mid'
+        backing_midi.write(str(temp_backing_file))
+        raw_backing_events = midi_to_events(str(temp_backing_file))
+        os.remove(temp_backing_file)
+        
+        # Filter backing events
+        backing_events = []
+        for event in raw_backing_events:
+            if isinstance(event, int) and 0 <= event < 100:  # Very conservative limit
+                backing_events.append(event)
+        
+        print(f"[DEBUG] Filtered to {len(backing_events)} valid backing events")
+
+        # Use a subset of seed events for conditioning (every other event)
+        seed_subset = []
+        for i, event in enumerate(seed_events):
+            if i % 2 == 0:  # Every other event
+                seed_subset.append(event)
+
+        # Combine subset of seed events with backing events
+        combined_events = backing_events + seed_subset
+
+        print(f"Generating lead melody with {len(combined_events)} conditioning events...")
+
+        try:
+            # Use the actual backing track duration for generation
+            generation_duration = num_bars * seconds_per_bar
+            
+            # Generate with combined seed conditioning
+            generated_events = generate(
+                self.model,
+                start_time=0,
+                end_time=generation_duration,
+                controls=combined_events,
+                top_p=0.7,  # Very conservative
+                delta=50    # Very small delta
+            )
+
+            print(f"[DEBUG] Generated {len(generated_events)} events")
+            
+            # Very aggressive filtering
+            filtered_events = []
+            for event in generated_events:
+                if isinstance(event, int) and 0 <= event < 100:  # Very conservative limit
+                    filtered_events.append(event)
+            
+            print(f"[DEBUG] Filtered from {len(generated_events)} to {len(filtered_events)} valid events")
+            
+            if len(filtered_events) < 3:  # Need at least 3 events for a meaningful melody
+                print("[DEBUG] Too few valid events, using algorithmic fallback")
+                return None
+            
+            # Try to convert to MIDI
+            try:
+                generated_midi = events_to_midi(filtered_events)
+                print("[DEBUG] Successfully converted to MIDI")
+            except Exception as e:
+                print(f"[DEBUG] MIDI conversion failed: {e}")
+                return None
+
+            # Convert to pretty_midi and process
+            temp_file = self.output_dir / 'temp_generated.mid'
+            try:
+                generated_midi.save(str(temp_file))
+                pretty_generated = pretty_midi.PrettyMIDI(str(temp_file))
+                
+                # Process the generated melody
+                valid_notes = []
+                current_time = 0
+                
+                all_notes = []
+                for instrument in pretty_generated.instruments:
+                    if not instrument.is_drum:
+                        all_notes.extend(instrument.notes)
+                all_notes.sort(key=lambda x: x.start)
+                
+                # Filter for monophonic melody in guitar range
+                for note in all_notes:
+                    if 60 <= note.pitch <= 84:  # Guitar range
+                        start_time = max(0, note.start)
+                        end_time = min(num_bars * seconds_per_bar, note.end)
+                        
+                        if end_time <= start_time or start_time < current_time:
+                            continue
+                        
+                        duration = min(0.5, max(0.125, end_time - start_time))
+                        velocity = min(120, max(80, note.velocity))
+                        
+                        new_note = pretty_midi.Note(
+                            velocity=velocity,
+                            pitch=note.pitch,
+                            start=start_time,
+                            end=start_time + duration
+                        )
+                        valid_notes.append(new_note)
+                        current_time = new_note.end
+                
+                print(f"[DEBUG] Processed {len(valid_notes)} valid notes from AMT")
+                
+                if len(valid_notes) == 0:
+                    print("[DEBUG] No valid notes processed, using algorithmic fallback")
+                    return None
+                
+                # Create final MIDI with proper tempo
+                final_midi = pretty_midi.PrettyMIDI(initial_tempo=tempo)
+                synth_lead = pretty_midi.Instrument(program=81)  # Lead 2 (sawtooth)
+                
+                for note in valid_notes:
+                    synth_lead.notes.append(note)
+                
+                final_midi.instruments.append(synth_lead)
+                
+                # Clean up temp file
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+                
+                print(f"[DEBUG] AMT generation successful with {len(valid_notes)} notes")
+                return final_midi
+                
+            except Exception as e:
+                print(f"[DEBUG] Error processing generated MIDI: {e}")
+                return None
+                
+        except Exception as e:
+            print(f"[DEBUG] AMT generation failed: {e}")
+            return None
 
     def _generate_algorithmic_melody(self, backing_midi, num_bars=8, tempo=120):
         """Generate a melody using algorithmic approach when AMT fails."""
@@ -534,4 +839,56 @@ class AMTBackingGenerator:
         # Create a MIDI file
         midi = pretty_midi.PrettyMIDI(initial_tempo=tempo)
         synth_lead = pretty_midi.Instrument(program=81)  # Lead 2 (sawtooth)
+
+        # Define a simple 2-beat pattern using the major scale
+        scale = []
+        root_note = key  # Use the provided key as the root note
+        # Add one octave of notes in the major scale
+        for i in range(8):  # 8 notes in an octave
+            if i == 0:  # Root
+                scale.append(root_note)
+            elif i == 1:  # Major second
+                scale.append(root_note + 2)
+            elif i == 2:  # Major third
+                scale.append(root_note + 4)
+            elif i == 3:  # Perfect fourth
+                scale.append(root_note + 5)
+            elif i == 4:  # Perfect fifth
+                scale.append(root_note + 7)
+            elif i == 5:  # Major sixth
+                scale.append(root_note + 9)
+            elif i == 6:  # Major seventh
+                scale.append(root_note + 11)
+            elif i == 7:  # Octave
+                scale.append(root_note + 12)
+        
+        print(f"[DEBUG] Generated scale with {len(scale)} notes: {scale}")
+        
+        # Create just 2 quarter notes for the seed
+        current_time = 0
+        
+        # First note: root
+        note1 = pretty_midi.Note(
+            velocity=90,
+            pitch=scale[0],  # Root note
+            start=current_time,
+            end=current_time + beat_duration
+        )
+        synth_lead.notes.append(note1)
+        print(f"[DEBUG] Seed note 1: pitch={scale[0]}, start={current_time}, end={current_time + beat_duration}")
+        
+        current_time += beat_duration
+        
+        # Second note: third
+        note2 = pretty_midi.Note(
+            velocity=90,
+            pitch=scale[2],  # Third note
+            start=current_time,
+            end=current_time + beat_duration
+        )
+        synth_lead.notes.append(note2)
+        print(f"[DEBUG] Seed note 2: pitch={scale[2]}, start={current_time}, end={current_time + beat_duration}")
+
+        midi.instruments.append(synth_lead)
+        return midi
 
