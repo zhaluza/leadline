@@ -133,10 +133,31 @@ const SheetMusicVisualizer: React.FC<SheetMusicVisualizerProps> = ({
 
   if (loading) {
     return (
-      <div className="bg-gray-800 rounded-lg p-4">
-        <h3 className="text-lg font-semibold mb-2 text-blue-300">{label}</h3>
-        <div className="flex items-center justify-center h-32">
-          <div className="text-gray-400">Loading sheet music...</div>
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <div className="flex-shrink-0 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center">
+            <svg
+              className="h-3 w-3 text-white"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+              />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-blue-300">{label}</h3>
+        </div>
+
+        <div className="flex items-center justify-center h-32 bg-gray-700/30 rounded-xl border border-gray-600/50">
+          <div className="flex items-center gap-3 text-gray-400">
+            <div className="w-5 h-5 border-2 border-gray-400/30 border-t-gray-400 rounded-full animate-spin"></div>
+            <span>Loading sheet music...</span>
+          </div>
         </div>
       </div>
     );
@@ -144,38 +165,118 @@ const SheetMusicVisualizer: React.FC<SheetMusicVisualizerProps> = ({
 
   if (error) {
     return (
-      <div className="bg-gray-800 rounded-lg p-4">
-        <h3 className="text-lg font-semibold mb-2 text-blue-300">{label}</h3>
-        <div className="flex items-center justify-center h-32">
-          <div className="text-red-400">Error: {error}</div>
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <div className="flex-shrink-0 w-6 h-6 bg-red-600 rounded-full flex items-center justify-center">
+            <svg
+              className="h-3 w-3 text-white"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-red-300">{label}</h3>
+        </div>
+
+        <div className="flex items-center justify-center h-32 bg-red-900/20 rounded-xl border border-red-500/30">
+          <div className="text-red-400 font-medium">Error: {error}</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4">
-      <h3 className="text-lg font-semibold mb-2 text-blue-300">{label}</h3>
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <div className="flex-shrink-0 w-6 h-6 bg-green-600 rounded-full flex items-center justify-center">
+          <svg
+            className="h-3 w-3 text-white"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+            />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-green-300">{label}</h3>
+      </div>
+
       <div className="overflow-x-auto">
         <div
           ref={containerRef}
-          className="border border-gray-600 rounded bg-white"
+          className="border border-gray-600/50 rounded-xl bg-white shadow-lg"
           style={{ minHeight: height }}
         />
       </div>
+
       {midiData && (
-        <div className="mt-2 text-sm text-gray-400">
-          <span>Tracks: {midiData.tracks.length}</span>
-          <span className="mx-2">•</span>
-          <span>Duration: {midiData.duration.toFixed(1)}s</span>
-          <span className="mx-2">•</span>
-          <span>
-            Notes:{" "}
-            {midiData.tracks.reduce(
-              (sum, track) => sum + track.notes.length,
-              0
-            )}
-          </span>
+        <div className="flex flex-wrap gap-4 text-sm text-gray-400 bg-gray-700/30 rounded-lg p-3 border border-gray-600/50">
+          <div className="flex items-center gap-1">
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+              />
+            </svg>
+            <span>Tracks: {midiData.tracks.length}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            <span>Duration: {midiData.duration.toFixed(1)}s</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+              />
+            </svg>
+            <span>
+              Notes:{" "}
+              {midiData.tracks.reduce(
+                (sum, track) => sum + track.notes.length,
+                0
+              )}
+            </span>
+          </div>
         </div>
       )}
     </div>
