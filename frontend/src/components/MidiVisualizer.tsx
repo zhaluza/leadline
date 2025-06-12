@@ -49,7 +49,7 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
             sustain: 0.3,
             release: 0.5,
           },
-          volume: 10,
+          volume: 20,
         }).toDestination();
 
         // Bass (program 32) - Use monophonic synth
@@ -67,7 +67,7 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
             sustain: 0.3,
             release: 0.5,
           },
-          volume: 8,
+          volume: 18,
         }).toDestination();
 
         // Lead synth (program 81) - Use polyphonic synth
@@ -79,7 +79,7 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
             sustain: 0.3,
             release: 0.5,
           },
-          volume: 6,
+          volume: 16,
         }).toDestination();
 
         // Drums (track 0) - Use membrane synth
@@ -93,7 +93,7 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
             sustain: 0.01,
             release: 1.4,
           },
-          volume: 12,
+          volume: 22,
         }).toDestination();
 
         console.log("Instruments created:", Object.keys(newSamplers));
@@ -353,7 +353,6 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
         }
 
         // Check for notes to play
-        let notesPlayedThisFrame = 0;
         allNotes.forEach((note) => {
           const noteKey = `${note.trackIndex}-${note.midi}-${note.time}`;
 
@@ -362,20 +361,6 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
             elapsed >= note.time &&
             elapsed < note.time + 0.1
           ) {
-            notesPlayedThisFrame++;
-            console.log(
-              "Playing note:",
-              note.name,
-              "at elapsed:",
-              elapsed,
-              "velocity:",
-              note.velocity,
-              "track:",
-              note.trackIndex,
-              "program:",
-              note.program
-            );
-
             // Choose sampler based on program number
             let sampler;
             if (note.trackIndex === 0) {
@@ -453,10 +438,6 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
           }
         });
 
-        if (notesPlayedThisFrame > 0) {
-          console.log(`Played ${notesPlayedThisFrame} notes this frame`);
-        }
-
         if (elapsed < duration) {
           requestAnimationFrame(updateProgress);
         } else {
@@ -477,71 +458,292 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
     }
   };
 
+  // Handle click-to-seek on progress bar
+  const handleProgressBarClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!duration) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    const newTime = percentage * duration;
+
+    setCurrentTime(newTime);
+    currentTimeRef.current = newTime;
+
+    // If playing, restart from new position
+    if (isPlayingRef.current) {
+      // Stop current playback
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+
+      // Restart playback from new position
+      setTimeout(() => {
+        startPlaybackFromTime(newTime);
+      }, 100);
+    }
+  };
+
+  // Handle click-to-seek on piano roll
+  const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!duration) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    const newTime = percentage * duration;
+
+    setCurrentTime(newTime);
+    currentTimeRef.current = newTime;
+
+    // If playing, restart from new position
+    if (isPlayingRef.current) {
+      // Stop current playback
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+
+      // Restart playback from new position
+      setTimeout(() => {
+        startPlaybackFromTime(newTime);
+      }, 100);
+    }
+  };
+
+  // Function to start playback from a specific time
+  const startPlaybackFromTime = async (startTime: number) => {
+    if (!midiData || !samplersLoaded) return;
+
+    try {
+      console.log("Starting playback from time:", startTime);
+      await Tone.start();
+
+      isPlayingRef.current = true;
+      setIsPlaying(true);
+      setCurrentTime(startTime);
+      currentTimeRef.current = startTime;
+
+      // Get all notes and sort them by time
+      const allNotes: Array<{
+        name: string;
+        time: number;
+        duration: number;
+        velocity: number;
+        trackIndex: number;
+        midi: number;
+        program: number;
+      }> = [];
+
+      midiData.tracks.forEach((track, trackIndex) => {
+        track.notes.forEach((note) => {
+          allNotes.push({
+            name: note.name,
+            time: note.time,
+            duration: note.duration,
+            velocity: note.velocity,
+            trackIndex,
+            midi: note.midi,
+            program: 0,
+          });
+        });
+      });
+
+      allNotes.sort((a, b) => a.time - b.time);
+
+      const playedNotes = new Set<string>();
+      const playbackStartTime = Date.now() - startTime * 1000; // Adjust for seek time
+
+      const updateProgress = () => {
+        if (!isPlayingRef.current) {
+          console.log("Playback stopped, exiting update loop");
+          return;
+        }
+
+        const elapsed = (Date.now() - playbackStartTime) / 1000;
+        currentTimeRef.current = elapsed;
+        setCurrentTime(elapsed);
+
+        // Check for notes to play
+        allNotes.forEach((note) => {
+          const noteKey = `${note.trackIndex}-${note.midi}-${note.time}`;
+
+          if (
+            !playedNotes.has(noteKey) &&
+            elapsed >= note.time &&
+            elapsed < note.time + 0.1
+          ) {
+            // Choose sampler based on program number
+            let sampler;
+            if (note.trackIndex === 0) {
+              sampler = samplers[-1]; // First track is usually drums
+            } else if (note.trackIndex === 1) {
+              sampler = samplers[32]; // Second track is usually bass
+            } else {
+              sampler = samplers[note.program] || samplers[0]; // Use piano as fallback
+            }
+
+            if (sampler) {
+              const durationStr =
+                note.duration <= 0.25
+                  ? "16n"
+                  : note.duration <= 0.5
+                  ? "8n"
+                  : note.duration <= 1
+                  ? "4n"
+                  : note.duration <= 2
+                  ? "2n"
+                  : "1n";
+
+              // For drums, use different notes for different drum sounds
+              if (note.trackIndex === 0) {
+                // Map MIDI drum notes to different drum sounds
+                const drumMap: { [key: number]: string } = {
+                  36: "C2", // Bass drum
+                  38: "D2", // Snare
+                  42: "F#2", // Closed hi-hat
+                  46: "A#2", // Open hi-hat
+                  49: "C#3", // Crash cymbal
+                  51: "D#3", // Ride cymbal
+                };
+                const drumNote = drumMap[note.midi] || "C2";
+                try {
+                  sampler.triggerAttackRelease(
+                    drumNote,
+                    durationStr,
+                    undefined,
+                    Math.max(0.1, note.velocity / 127)
+                  );
+                } catch (err) {
+                  console.warn("Failed to play drum note:", drumNote, err);
+                }
+              } else {
+                try {
+                  sampler.triggerAttackRelease(
+                    note.name,
+                    durationStr,
+                    undefined,
+                    Math.max(0.1, note.velocity / 127)
+                  );
+                } catch (err) {
+                  console.warn("Failed to play note:", note.name, err);
+                }
+              }
+            }
+
+            playedNotes.add(noteKey);
+          }
+        });
+
+        if (elapsed < duration) {
+          requestAnimationFrame(updateProgress);
+        } else {
+          console.log("Playback finished");
+          isPlayingRef.current = false;
+          setIsPlaying(false);
+          setCurrentTime(0);
+          currentTimeRef.current = 0;
+        }
+      };
+
+      updateProgress();
+    } catch (error) {
+      console.error("Error starting playback from time:", error);
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+    }
+  };
+
   if (isLoading) {
     return (
-      <div className="midi-visualizer">
-        <h3>{label}</h3>
-        <div>Loading MIDI data...</div>
+      <div className="bg-gray-800 rounded-lg p-4">
+        <h3 className="text-lg font-semibold mb-2 text-blue-300">{label}</h3>
+        <div className="flex items-center justify-center h-32">
+          <div className="text-gray-400">Loading MIDI data...</div>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="midi-visualizer">
-        <h3>{label}</h3>
-        <div style={{ color: "red" }}>Error: {error}</div>
+      <div className="bg-gray-800 rounded-lg p-4">
+        <h3 className="text-lg font-semibold mb-2 text-blue-300">{label}</h3>
+        <div className="flex items-center justify-center h-32">
+          <div className="text-red-400">Error: {error}</div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="midi-visualizer">
-      <h3>{label}</h3>
-      <div style={{ marginBottom: "10px" }}>
-        <button
-          onClick={handlePlayPause}
-          disabled={!midiData || !samplersLoaded}
-        >
-          {isPlaying ? "⏸️ Pause" : "▶️ Play"}
-        </button>
-        {!samplersLoaded && (
-          <span style={{ marginLeft: "10px", color: "#666" }}>
-            Loading instruments...
-          </span>
-        )}
+    <div className="bg-gray-800 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-lg font-semibold text-blue-300">{label}</h3>
+        <div className="flex gap-2">
+          <button
+            onClick={handlePlayPause}
+            disabled={!midiData || !samplersLoaded}
+            className={`px-3 py-1 rounded text-sm font-medium transition-colors
+              ${
+                !midiData || !samplersLoaded
+                  ? "bg-gray-600 text-gray-400 cursor-not-allowed"
+                  : isPlaying
+                  ? "bg-red-600 hover:bg-red-700 text-white"
+                  : "bg-green-600 hover:bg-green-700 text-white"
+              }`}
+          >
+            {isPlaying ? "⏸️ Pause" : "▶️ Play"}
+          </button>
+          {!samplersLoaded && (
+            <span className="text-xs text-gray-400">
+              Loading instruments...
+            </span>
+          )}
+        </div>
       </div>
 
-      <div style={{ marginBottom: "10px" }}>
-        <div style={{ fontSize: "12px", color: "#666" }}>
-          Time: {currentTime.toFixed(1)}s / {duration.toFixed(1)}s
-        </div>
-        <div
-          style={{
-            width: "100%",
-            height: "4px",
-            backgroundColor: "#333",
-            borderRadius: "2px",
-            overflow: "hidden",
-          }}
-        >
+      {/* Progress bar */}
+      {duration > 0 && (
+        <div className="mb-2">
+          <div className="flex justify-between text-xs text-gray-400 mb-1">
+            <span>{currentTime.toFixed(1)}s</span>
+            <span>{duration.toFixed(1)}s</span>
+          </div>
           <div
-            style={{
-              width: `${(currentTime / duration) * 100}%`,
-              height: "100%",
-              backgroundColor: "#4ecdc4",
-              transition: "width 0.1s linear",
-            }}
-          />
+            className="w-full bg-gray-700 rounded-full h-2 cursor-pointer"
+            onClick={handleProgressBarClick}
+          >
+            <div
+              className="bg-blue-500 h-2 rounded-full transition-all duration-100"
+              style={{ width: `${(currentTime / duration) * 100}%` }}
+            />
+          </div>
         </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <canvas
+          ref={canvasRef}
+          width={width}
+          height={height}
+          className="border border-gray-600 rounded cursor-pointer"
+          onClick={handleCanvasClick}
+        />
       </div>
 
-      <canvas
-        ref={canvasRef}
-        width={width}
-        height={height}
-        style={{ border: "1px solid #333", borderRadius: "4px" }}
-      />
+      {midiData && (
+        <div className="mt-2 text-sm text-gray-400">
+          <span>Tracks: {midiData.tracks.length}</span>
+          <span className="mx-2">•</span>
+          <span>Duration: {midiData.duration.toFixed(1)}s</span>
+          <span className="mx-2">•</span>
+          <span>
+            Notes:{" "}
+            {midiData.tracks.reduce(
+              (sum, track) => sum + track.notes.length,
+              0
+            )}
+          </span>
+        </div>
+      )}
     </div>
   );
 };
