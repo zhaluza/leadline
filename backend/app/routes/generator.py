@@ -465,11 +465,34 @@ async def generate_lead_with_seed(generation_id: str, request: LeadMelodyRequest
 async def preview_seed_melody(generation_id: str, request: GenerationRequest):
     """Generate and preview the seed melody that will be used for lead generation."""
     try:
+        # Verify backing track exists and extract its tempo
+        backing_dir = Path("static") / generation_id
+        backing_midi = backing_dir / "backing.mid"
+        if not backing_midi.exists():
+            raise HTTPException(status_code=404, detail="Backing track not found")
+
+        # Load the backing track to extract its tempo
+        backing_track = pretty_midi.PrettyMIDI(str(backing_midi))
+        
+        # Extract tempo from backing track
+        backing_tempo = request.tempo  # Default to requested tempo
+        try:
+            tempo_times, tempo_values = backing_track.get_tempo_changes()
+            if len(tempo_values) > 0:
+                backing_tempo = int(tempo_values[0])
+                print(f"[DEBUG] Extracted tempo from backing track for seed preview: {backing_tempo} BPM")
+            else:
+                print(f"[DEBUG] Using requested tempo for seed preview: {request.tempo} BPM")
+        except Exception as e:
+            print(f"[DEBUG] Could not extract tempo from backing track: {e}")
+            print(f"[DEBUG] Using requested tempo for seed preview: {request.tempo} BPM")
+        
         # Generate seed melody for just 1 bar (this is what's actually used as seed)
+        # Use the backing track's tempo instead of the requested tempo
         seed_melody = generator.create_seed_melody(
             key=request.key,
             num_bars=1,  # Only 1 bar as seed
-            tempo=request.tempo
+            tempo=backing_tempo  # Use backing track tempo
         )
         
         # Save seed melody files
@@ -482,7 +505,7 @@ async def preview_seed_melody(generation_id: str, request: GenerationRequest):
         
         # Save audio file
         audio_path = output_dir / "preview_seed.wav"
-        audio_data = generator.midi_to_audio(seed_melody)
+        audio_data = generator.audio_converter.midi_to_audio_no_adjustment(seed_melody)
         if audio_data is None or len(audio_data) == 0:
             raise ValueError("Generated audio data is empty")
         if np.max(np.abs(audio_data)) > 1.0:
@@ -494,7 +517,8 @@ async def preview_seed_melody(generation_id: str, request: GenerationRequest):
             "generation_id": generation_id,
             "midi_url": f"/static/{generation_id}/preview_seed.mid",
             "audio_url": f"/static/{generation_id}/preview_seed.wav",
-            "status": "completed"
+            "status": "completed",
+            "tempo_used": backing_tempo  # Return the actual tempo used
         }
         
     except Exception as e:
