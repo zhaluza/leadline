@@ -100,17 +100,6 @@ const MidiVisualizer: React.FC<MidiVisualizerProps> = ({
         setSamplers(newSamplers);
         setSamplersLoaded(true);
         console.log("All instruments initialized and ready");
-
-        // Test the instruments to make sure they work
-        setTimeout(() => {
-          console.log("Testing instruments...");
-          try {
-            newSamplers[0].triggerAttackRelease("C4", "4n");
-            console.log("Piano test note played");
-          } catch (err) {
-            console.error("Piano test failed:", err);
-          }
-        }, 1000);
       } catch (error) {
         console.error("Error initializing instruments:", error);
         // Fallback to basic synths if samplers fail
