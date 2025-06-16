@@ -12,7 +12,7 @@ from functools import wraps
 import numpy as np
 from scipy.io import wavfile
 
-from app.core.generator_clean import AMTBackingGenerator
+from app.core.generator import AMTBackingGenerator
 
 router = APIRouter()
 

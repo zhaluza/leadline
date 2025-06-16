@@ -154,7 +154,7 @@ The frontend will be available at `http://localhost:5173`
 ├── backend/
 │   ├── app/
 │   │   ├── core/
-│   │   │   ├── generator_clean.py    # Main AMT generator
+│   │   │   ├── generator.py          # Main AMT generator
 │   │   │   ├── audio_utils.py        # Audio conversion
 │   │   │   └── music_utils.py        # Music theory utilities
 │   │   └── routes/
